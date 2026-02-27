@@ -1,0 +1,56 @@
+package botfather
+
+const (
+	// BotFatherUID BotFather的用户UID
+	BotFatherUID = "botfather"
+	// BotFatherName BotFather的显示名称
+	BotFatherName = "BotFather"
+	// BotTokenPrefix Bot Token前缀
+	BotTokenPrefix = "bf_"
+	// BotUsernameSuffix 机器人用户名后缀
+	BotUsernameSuffix = "_bot"
+
+	// Redis状态机相关
+	stateKeyPrefix = "botfather:state:" // Redis Hash key前缀
+	stateTTL       = 600                // 状态过期时间（秒）
+
+	// 心跳相关
+	heartbeatKeyPrefix = "bot:heartbeat:" // 心跳key前缀
+	heartbeatTTL       = 60               // 心跳过期时间（秒）
+)
+
+// BotFather 命令
+const (
+	CmdNewBot         = "/newbot"
+	CmdMyBots         = "/mybots"
+	CmdConnect        = "/connect"
+	CmdDisconnect     = "/disconnect"
+	CmdSetName        = "/setname"
+	CmdSetDescription = "/setdescription"
+	CmdDeleteBot      = "/deletebot"
+	CmdToken          = "/token"
+	CmdRevoke         = "/revoke"
+	CmdCancel         = "/cancel"
+	CmdHelp           = "/help"
+	CmdStart          = "/start"
+)
+
+// 对话状态
+const (
+	StateNone                  = ""
+	StateWaitingBotName        = "waiting_bot_name"
+	StateWaitingBotUsername    = "waiting_bot_username"
+	StateWaitingSelectBot      = "waiting_select_bot"
+	StateWaitingNewName        = "waiting_new_name"
+	StateWaitingDescription    = "waiting_description"
+	StateWaitingDeleteConfirm  = "waiting_delete_confirm"
+	StateWaitingRevokeConfirm  = "waiting_revoke_confirm"
+)
+
+// 状态上下文字段
+const (
+	FieldState   = "state"
+	FieldCommand = "command"
+	FieldBotID   = "bot_id"
+	FieldBotName = "bot_name"
+)

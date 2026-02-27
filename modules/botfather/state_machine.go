@@ -1,0 +1,76 @@
+package botfather
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/TangSengDaoDao/TangSengDaoDaoServerLib/config"
+)
+
+// stateMachine Redis Hash状态机，管理BotFather多轮对话状态
+type stateMachine struct {
+	ctx *config.Context
+}
+
+func newStateMachine(ctx *config.Context) *stateMachine {
+	return &stateMachine{ctx: ctx}
+}
+
+func (sm *stateMachine) key(uid string) string {
+	return fmt.Sprintf("%s%s", stateKeyPrefix, uid)
+}
+
+// GetState 获取用户当前对话状态
+func (sm *stateMachine) GetState(uid string) (string, error) {
+	return sm.GetField(uid, FieldState)
+}
+
+// GetField 获取状态中的某个字段
+func (sm *stateMachine) GetField(uid string, field string) (string, error) {
+	result, err := sm.ctx.GetRedisConn().Hget(sm.key(uid), field)
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+// SetState 设置对话状态
+func (sm *stateMachine) SetState(uid string, state string, command string) error {
+	k := sm.key(uid)
+	err := sm.ctx.GetRedisConn().Hset(k, FieldState, state)
+	if err != nil {
+		return err
+	}
+	if command != "" {
+		err = sm.ctx.GetRedisConn().Hset(k, FieldCommand, command)
+		if err != nil {
+			return err
+		}
+	}
+	return sm.ctx.GetRedisConn().Expire(k, time.Second*stateTTL)
+}
+
+// SetField 设置状态中的某个字段
+func (sm *stateMachine) SetField(uid string, field string, value string) error {
+	k := sm.key(uid)
+	err := sm.ctx.GetRedisConn().Hset(k, field, value)
+	if err != nil {
+		return err
+	}
+	return sm.ctx.GetRedisConn().Expire(k, time.Second*stateTTL)
+}
+
+// Clear 清除用户状态
+func (sm *stateMachine) Clear(uid string) error {
+	return sm.ctx.GetRedisConn().Del(sm.key(uid))
+}
+
+// GetCommand 获取当前正在执行的命令
+func (sm *stateMachine) GetCommand(uid string) (string, error) {
+	return sm.GetField(uid, FieldCommand)
+}
+
+// GetBotID 获取正在操作的Bot ID
+func (sm *stateMachine) GetBotID(uid string) (string, error) {
+	return sm.GetField(uid, FieldBotID)
+}

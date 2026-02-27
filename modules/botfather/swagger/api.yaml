@@ -1,0 +1,40 @@
+openapi: 3.0.0
+info:
+  title: BotFather API
+  version: 1.0.0
+paths:
+  /v1/bot/skill.md:
+    get:
+      summary: 获取Bot技能文档
+      tags:
+        - bot
+  /v1/bot/register:
+    post:
+      summary: Bot自注册
+      tags:
+        - bot
+  /v1/bot/sendMessage:
+    post:
+      summary: Bot发送消息
+      tags:
+        - bot
+  /v1/bot/typing:
+    post:
+      summary: Bot发送输入状态
+      tags:
+        - bot
+  /v1/bot/events:
+    post:
+      summary: Bot轮询消息
+      tags:
+        - bot
+  /v1/bot/stream/start:
+    post:
+      summary: 流式消息开始
+      tags:
+        - bot
+  /v1/bot/stream/end:
+    post:
+      summary: 流式消息结束
+      tags:
+        - bot
