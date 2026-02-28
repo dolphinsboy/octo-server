@@ -2759,6 +2759,9 @@ type registerReq struct {
 }
 
 func (r registerReq) CheckRegister() error {
+	if strings.TrimSpace(r.Name) == "" {
+		return errors.New("用户名不能为空！")
+	}
 	if strings.TrimSpace(r.Zone) == "" {
 		return errors.New("区号不能为空！")
 	}
