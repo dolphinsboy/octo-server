@@ -1,173 +1,75 @@
 # DMWork Bot Skill
 
-Connect to DMWork messaging platform as a bot. Receive messages from users and reply via REST API.
+Connect to DMWork messaging platform as an AI bot via the OpenClaw DMWork adapter plugin.
 
 ## Setup
 
-1. You have a bot token and server URL provided by the user.
-2. Register with the server to get your credentials.
-3. Poll for messages and reply to users.
-
-## Step 1: Register
+### 1. Install the DMWork plugin
 
 ```bash
-curl -s -X POST {SERVER_URL}/v1/bot/register \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Claude Code Agent"}'
+openclaw plugins install openclaw-channel-dmwork
 ```
 
-Save the response fields:
-- `robot_id` — your bot's ID
-- `im_token` — for WebSocket (optional)
-- `owner_uid` — the user who created you
-- `owner_channel_id` — DM channel to your owner
-- `ws_url` — WebSocket URL (for real-time, optional)
-- `api_url` — REST API base URL
+### 2. Get a Bot Token
 
-## Step 2: Greet your owner
+In DMWork, find **BotFather** in your contacts and send:
+1. `/newbot` — create a new bot
+2. Set bot name and username
+3. Copy the bot token (starts with `bf_`)
 
-```bash
-curl -s -X POST {SERVER_URL}/v1/bot/sendMessage \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "channel_id": "{OWNER_UID}",
-    "channel_type": 1,
-    "payload": {"type": 1, "content": "Hello! I am your AI assistant, ready to help."}
-  }'
-```
+### 3. Configure OpenClaw
 
-## Step 3: Poll for messages
+Add to your `openclaw.json`:
 
-```bash
-curl -s -X POST {SERVER_URL}/v1/bot/events \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"event_id": 0, "limit": 20}'
-```
-
-Response format:
 ```json
 {
-  "status": 1,
-  "results": [{
-    "event_id": 12345,
-    "message": {
-      "message_id": 100,
-      "from_uid": "user123",
-      "channel_id": "...",
-      "channel_type": 1,
-      "payload": {"type": 1, "content": "Hello bot"},
-      "timestamp": 1700000000
+  "channels": {
+    "dmwork": {
+      "enabled": true,
+      "botToken": "bf_your_token_here",
+      "apiUrl": "http://your-dmwork-server:8090",
+      "wsUrl": "ws://your-dmwork-server:5200"
     }
-  }]
+  }
 }
 ```
 
-After processing each event, acknowledge it:
-```bash
-curl -s -X POST {SERVER_URL}/v1/bot/events/{EVENT_ID}/ack \
-  -H "Authorization: Bearer {BOT_TOKEN}"
-```
-
-## Step 4: Reply to messages
+### 4. Restart OpenClaw
 
 ```bash
-curl -s -X POST {SERVER_URL}/v1/bot/sendMessage \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "channel_id": "{FROM_UID_OR_CHANNEL_ID}",
-    "channel_type": 1,
-    "payload": {"type": 1, "content": "Your reply here"}
-  }'
+openclaw gateway restart
 ```
 
-## Optional: Typing indicator
+Your bot is now online and will:
+- **Private chat**: respond to all messages
+- **Group chat**: respond only when @mentioned (configurable)
 
-Show "typing..." to the user while processing:
-```bash
-curl -s -X POST {SERVER_URL}/v1/bot/typing \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"channel_id": "{CHANNEL_ID}", "channel_type": 1}'
-```
+## Configuration Options
 
-## Optional: Streaming output
+| Option | Default | Description |
+|--------|---------|-------------|
+| `botToken` | required | Bot token from BotFather |
+| `apiUrl` | required | DMWork API URL |
+| `wsUrl` | required | WuKongIM WebSocket URL |
+| `requireMention` | `true` | Group chat: only respond when @mentioned |
 
-For long AI responses, use streaming to show text progressively:
+## Features
 
-```bash
-# 1. Start stream
-STREAM_NO=$(curl -s -X POST {SERVER_URL}/v1/bot/stream/start \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"channel_id": "xxx", "channel_type": 1, "payload": "eyJ0eXBlIjoxLCJjb250ZW50IjoiIn0="}' \
-  | jq -r '.stream_no')
-
-# 2. Send chunks (accumulated content each time)
-curl -s -X POST {SERVER_URL}/v1/bot/sendMessage \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d "{\"channel_id\": \"xxx\", \"channel_type\": 1, \"stream_no\": \"$STREAM_NO\", \"payload\": {\"type\": 1, \"content\": \"Partial response...\"}}"
-
-# 3. End stream
-curl -s -X POST {SERVER_URL}/v1/bot/stream/end \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d "{\"stream_no\": \"$STREAM_NO\", \"channel_id\": \"xxx\", \"channel_type\": 1}"
-```
-
-## Optional: Read Receipt
-
-Mark messages as read (shows double-checkmark to the sender). Pass `message_ids` as **string array** to avoid large-number precision loss:
-
-```bash
-curl -s -X POST {SERVER_URL}/v1/bot/readReceipt \
-  -H "Authorization: Bearer {BOT_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"channel_id": "{CHANNEL_ID}", "channel_type": 1, "message_ids": ["{MESSAGE_ID}"]}'
-```
-
-## Optional: Heartbeat (keep online status)
-
-Send every 30 seconds to stay online:
-```bash
-curl -s -X POST {SERVER_URL}/v1/bot/heartbeat \
-  -H "Authorization: Bearer {BOT_TOKEN}"
-```
+- Real-time WebSocket connection (no polling needed)
+- Mention gating for group chats
+- History context: unmentioned messages are prepended when bot is @mentioned
+- Multi-bot support: each bot token = one OpenClaw instance
 
 ## Channel Types
 - 1 = Direct Message (DM)
 - 2 = Group Chat
 
 ## Message Types (payload.type)
-- 1 = Text (payload.content = text string)
-- 2 = Image (payload.url = image URL)
-- 3 = GIF (payload.url = gif URL)
-- 4 = Voice (payload.url = audio URL)
-- 5 = Video (payload.url = video URL)
-- 6 = Location (payload.latitude, payload.longitude)
-- 7 = Card (payload.uid or payload.name)
-- 8 = File (payload.url = file URL)
-
-## Security
-- NEVER share your bot_token publicly
-- Only use the token in the Authorization header
-- All API calls should be made server-side
-
-## Typical Bot Loop
-
-```
-1. Register → save credentials
-2. Send greeting to owner
-3. Loop:
-   a. Send heartbeat (every 30s)
-   b. Poll events
-   c. For each new message:
-      - Send typing
-      - Process message (call AI, etc.)
-      - Reply with result
-      - Ack event
-```
+- 1 = Text
+- 2 = Image
+- 3 = GIF
+- 4 = Voice
+- 5 = Video
+- 6 = Location
+- 7 = Card
+- 8 = File
