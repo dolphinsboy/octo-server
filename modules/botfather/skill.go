@@ -7,9 +7,25 @@ import (
 	"github.com/TangSengDaoDao/TangSengDaoDaoServerLib/config"
 )
 
-// deriveWSURL 从WuKongIM API URL推导出WebSocket URL
+// deriveWSURL 从 baseURL 或 WuKongIM API URL 推导出 WebSocket URL
+// 优先使用 baseURL 对应的 WSS 地址（通过 Nginx 代理）
 func deriveWSURL(cfg *config.Config) string {
-	apiURL := cfg.WuKongIM.APIURL // e.g. http://127.0.0.1:5001
+	baseURL := strings.TrimSpace(cfg.External.BaseURL)
+	if baseURL != "" {
+		// baseURL = "https://api-test.example.com/api" → "wss://api-test.example.com/ws"
+		host := baseURL
+		host = strings.TrimPrefix(host, "https://")
+		host = strings.TrimPrefix(host, "http://")
+		if idx := strings.Index(host, "/"); idx >= 0 {
+			host = host[:idx]
+		}
+		if strings.HasPrefix(baseURL, "https://") {
+			return fmt.Sprintf("wss://%s/ws", host)
+		}
+		return fmt.Sprintf("ws://%s/ws", host)
+	}
+	// Fallback: 从 WuKongIM API URL 推导
+	apiURL := cfg.WuKongIM.APIURL
 	host := apiURL
 	host = strings.TrimPrefix(host, "http://")
 	host = strings.TrimPrefix(host, "https://")
@@ -87,10 +103,8 @@ After registering, send a greeting to your owner (DM to owner_uid) to confirm yo
 Install the pre-built adapter as an OpenClaw extension for instant message delivery, real-time online status, and auto-reconnect.
 
 `+"```"+`bash
-# Install as OpenClaw extension
-git clone https://github.com/Mininglamp-OSS/octo-adapters.git
-cp -r dmwork-adapters/openclaw-channel-dmwork ~/.openclaw/extensions/dmwork
-cd ~/.openclaw/extensions/dmwork && npm install
+# Install via npm (recommended)
+openclaw plugins install openclaw-channel-dmwork
 `+"```"+`
 
 Configure in `+"`"+`~/.openclaw/config.yaml`+"`"+`:
@@ -114,7 +128,7 @@ Features:
 - Auto-reconnect on disconnection
 - Full OpenClaw plugin integration
 
-Source & docs: https://github.com/Mininglamp-OSS/octo-adapters
+Source & docs: https://www.npmjs.com/package/openclaw-channel-dmwork
 
 ### Method B: REST Polling (Fallback)
 

@@ -732,8 +732,8 @@ func (h *commandHandler) sendConnectPrompt(toUID string, bot *robotModel) {
 Read %s/v1/bot/skill.md to connect to DMWork messaging.
 My bot token is: %s
 API server: %s
-Pre-built adapter: https://github.com/Mininglamp-OSS/octo-adapters
-Use the pre-built adapter (Method A in skill.md) for best results.
+Install adapter: openclaw plugins install openclaw-channel-dmwork
+Or install manually: npm i openclaw-channel-dmwork
 DM me on DMWork when you're ready.
 ---
 
@@ -760,8 +760,8 @@ func (h *commandHandler) sendCreatedPrompt(toUID string, name string, bot *robot
 Read %s/v1/bot/skill.md to connect to DMWork messaging.
 My bot token is: %s
 API server: %s
-Pre-built adapter: https://github.com/Mininglamp-OSS/octo-adapters
-Use the pre-built adapter (Method A in skill.md) for best results.
+Install adapter: openclaw plugins install openclaw-channel-dmwork
+Or install manually: npm i openclaw-channel-dmwork
 DM me on DMWork when you're ready.
 ---
 
