@@ -733,12 +733,16 @@ func (h *commandHandler) sendConnectPrompt(toUID string, bot *robotModel) {
 Read %s/v1/bot/skill.md to connect to DMWork messaging.
 My bot token is: %s
 API server: %s
-Install adapter: openclaw plugins install openclaw-channel-dmwork
-Or install manually: npm i openclaw-channel-dmwork
+Install adapter: openclaw plugins install openclaw-channel-dmwork@0.2.12
+Configure in ~/.openclaw/openclaw.json:
+{"channels":{"dmwork":{"botToken":"YOUR_TOKEN","apiUrl":"API_SERVER"}}}
+Replace YOUR_TOKEN and API_SERVER with the values above.
+Then restart: openclaw gateway restart
 DM me on DMWork when you're ready.
 ---
 
 💡 支持 OpenClaw、Claude Code、及任何能读取 URL 的 AI Agent
+⚙️ 群聊默认只有 @机器人 时才回复（可在配置中修改）
 🔌 断开连接请发送 /disconnect`,
 		bot.RobotID, apiURL, bot.BotToken, apiURL)
 
@@ -761,12 +765,16 @@ func (h *commandHandler) sendCreatedPrompt(toUID string, name string, bot *robot
 Read %s/v1/bot/skill.md to connect to DMWork messaging.
 My bot token is: %s
 API server: %s
-Install adapter: openclaw plugins install openclaw-channel-dmwork
-Or install manually: npm i openclaw-channel-dmwork
+Install adapter: openclaw plugins install openclaw-channel-dmwork@0.2.12
+Configure in ~/.openclaw/openclaw.json:
+{"channels":{"dmwork":{"botToken":"YOUR_TOKEN","apiUrl":"API_SERVER"}}}
+Replace YOUR_TOKEN and API_SERVER with the values above.
+Then restart: openclaw gateway restart
 DM me on DMWork when you're ready.
 ---
 
 💡 支持 OpenClaw、Claude Code、及任何能读取 URL 的 AI Agent
+⚙️ 群聊默认只有 @机器人 时才回复（可在配置中修改）
 🔌 断开连接请发送 /disconnect`,
 		name, apiURL, bot.BotToken, apiURL)
 
