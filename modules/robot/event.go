@@ -115,22 +115,6 @@ func (rb *Robot) robotMessageListen(messages []*config.MessageResp) {
 			rb.Info("投递消息到机器人事件队列", zap.String("robotID", robotID), zap.String("fromUID", message.FromUID), zap.Int64("messageID", message.MessageID))
 			go rb.saveRobotMessage(message, robotID)
 			go rb.autoReadForBot(message, robotID)
-		} else if message.ChannelType == common.ChannelTypeGroup.Uint8() {
-			// 群消息未@任何机器人时，也投递给群内所有机器人成员
-			// 这样机器人可以积累群聊上下文，在被@时提供历史信息
-			groupRobotUIDs, err := rb.db.queryRobotUIDsInGroup(message.ChannelID)
-			if err != nil {
-				rb.Error("查询群内机器人失败", zap.Error(err), zap.String("channelID", message.ChannelID))
-			} else {
-				for _, ruid := range groupRobotUIDs {
-					// 跳过消息发送者自己（如果是机器人发的）
-					if ruid == message.FromUID {
-						continue
-					}
-					rb.Debug("投递群消息到机器人(无@)", zap.String("robotID", ruid), zap.String("fromUID", message.FromUID), zap.Int64("messageID", message.MessageID))
-					go rb.saveRobotMessage(message, ruid)
-				}
-			}
 		}
 	}
 }
