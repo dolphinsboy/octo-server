@@ -55,7 +55,7 @@ var allowedExtensions = map[string]bool{
 	".gz": true, ".bz2": true, ".xz": true,
 	// 其他
 	".json": true, ".xml": true, ".yaml": true, ".yml": true,
-	".apk": true, ".ipa": true, ".log": true,
+	".log": true,
 }
 
 // blockedExtensions 禁止上传的文件扩展名（可执行文件）
@@ -65,6 +65,7 @@ var blockedExtensions = map[string]bool{
 	".pif": true, ".vbs": true, ".vbe": true, ".js": true,
 	".jse": true, ".wsf": true, ".wsh": true, ".ps1": true,
 	".sys": true, ".cpl": true, ".inf": true, ".reg": true,
+	".apk": true, ".ipa": true,
 	".php": true, ".jsp": true, ".asp": true, ".aspx": true,
 	".cgi": true, ".py": true, ".rb": true, ".pl": true,
 }
