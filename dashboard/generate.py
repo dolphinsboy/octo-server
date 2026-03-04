@@ -12,6 +12,9 @@ OUTPUT_DIR = "/var/www/html/dashboard"
 # 排除 Bot、系统账号、测试用户
 EXCLUDE_UIDS = "uid NOT IN (SELECT robot_id FROM robot) AND uid NOT IN ('u_10000', 'botfather', 'fileHelper') AND name NOT LIKE '%测试%' AND username NOT LIKE 'test%' AND username NOT LIKE 'demo%'"
 
+# 排除测试群组
+EXCLUDE_GROUPS = "name NOT LIKE '%测试%' AND name NOT LIKE '%test%' AND creator NOT IN (SELECT uid FROM user WHERE name LIKE '%测试%' OR username LIKE 'test%')"
+
 def query(sql):
     # Write SQL to temp file to avoid shell escaping issues
     import tempfile
@@ -51,7 +54,7 @@ def get_metrics():
     r = query(f"SELECT COUNT(*) FROM message WHERE created_at >= CURDATE() AND from_uid IN (SELECT uid FROM user WHERE {EXCLUDE_UIDS})")
     data['today_messages'] = int(r[0][0]) if r else 0
     
-    r = query("SELECT COUNT(*) FROM `group`")
+    r = query("SELECT COUNT(*) FROM `group` WHERE " + EXCLUDE_GROUPS)
     data['total_groups'] = int(r[0][0]) if r else 0
     
     r = query("SELECT COUNT(*) FROM robot")
@@ -80,7 +83,7 @@ def get_metrics():
     data['dau_trend'] = [{'date': row[0], 'count': int(row[1])} for row in r] if r else []
     
     # 群组详情
-    r = query("SELECT g.name, (SELECT COUNT(*) FROM group_member gm WHERE gm.group_no=g.group_no AND gm.is_deleted=0) as total, (SELECT COUNT(*) FROM group_member gm WHERE gm.group_no=g.group_no AND gm.is_deleted=0 AND gm.robot=0) as humans, (SELECT COUNT(*) FROM group_member gm WHERE gm.group_no=g.group_no AND gm.is_deleted=0 AND gm.robot=1) as bots, (SELECT COUNT(*) FROM message m WHERE m.channel_id=g.group_no AND m.channel_type=2) as total_msgs, (SELECT COUNT(*) FROM message m WHERE m.channel_id=g.group_no AND m.channel_type=2 AND m.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) as week_msgs, (SELECT COUNT(*) FROM message m WHERE m.channel_id=g.group_no AND m.channel_type=2 AND m.created_at >= CURDATE()) as today_msgs, DATE(g.created_at) as created FROM `group` g ORDER BY week_msgs DESC")
+    r = query("SELECT g.name, (SELECT COUNT(*) FROM group_member gm WHERE gm.group_no=g.group_no AND gm.is_deleted=0) as total, (SELECT COUNT(*) FROM group_member gm WHERE gm.group_no=g.group_no AND gm.is_deleted=0 AND gm.robot=0) as humans, (SELECT COUNT(*) FROM group_member gm WHERE gm.group_no=g.group_no AND gm.is_deleted=0 AND gm.robot=1) as bots, (SELECT COUNT(*) FROM message m WHERE m.channel_id=g.group_no AND m.channel_type=2) as total_msgs, (SELECT COUNT(*) FROM message m WHERE m.channel_id=g.group_no AND m.channel_type=2 AND m.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)) as week_msgs, (SELECT COUNT(*) FROM message m WHERE m.channel_id=g.group_no AND m.channel_type=2 AND m.created_at >= CURDATE()) as today_msgs, DATE(g.created_at) as created FROM `group` g WHERE " + EXCLUDE_GROUPS + " ORDER BY week_msgs DESC")
     data['groups'] = []
     if r:
         for row in r:
