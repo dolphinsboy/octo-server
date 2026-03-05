@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/base/app"
+	"github.com/Mininglamp-OSS/octo-server/modules/group"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
@@ -31,6 +32,7 @@ type Robot struct {
 	robotEventPrefix                  string
 	userService                       user.IService
 	appService                        app.IService
+	groupService                      group.IService
 	inlineQueryEventsMap              map[string][]*robotEvent // inlineQuery事件
 	inlineQueryEventsMapLock          sync.RWMutex
 	inlineQueryEventResultChanMap     map[string]chan *InlineQueryResult
@@ -46,6 +48,7 @@ func New(ctx *config.Context) *Robot {
 		robotEventPrefix:              "robotEvent:",
 		userService:                   user.NewService(ctx),
 		appService:                    app.NewService(ctx),
+		groupService:                  group.NewService(ctx),
 		inlineQueryEventsMap:          map[string][]*robotEvent{},
 		inlineQueryEventResultChanMap: map[string]chan *InlineQueryResult{},
 		mentionRegexp:                 regexp.MustCompile(`@\S+`),
@@ -181,7 +184,7 @@ func (rb *Robot) typing(c *wkhttp.Context) {
 		c.ResponseError(errors.New("from_uid不能为空！"))
 		return
 	}
-	if !rb.allowSendToChannel(req.ChannelID, req.ChannelType) {
+	if !rb.allowSendToChannel(fromUID, req.ChannelID, req.ChannelType) {
 		c.ResponseError(errors.New("不允许发送消息到此频道！"))
 		return
 	}
@@ -214,7 +217,12 @@ func (rb *Robot) sendMessage(c *wkhttp.Context) {
 		return
 	}
 
-	if !rb.allowSendToChannel(messageReq.ChannelID, messageReq.ChannelType) {
+	robotID := c.Param("robot_id")
+	if robotID == "" {
+		c.ResponseError(errors.New("robot_id不能为空！"))
+		return
+	}
+	if !rb.allowSendToChannel(robotID, messageReq.ChannelID, messageReq.ChannelType) {
 		c.ResponseError(errors.New("不允许发送消息到此频道！"))
 		return
 	}
@@ -235,7 +243,6 @@ func (rb *Robot) sendMessage(c *wkhttp.Context) {
 		c.ResponseError(fmt.Errorf("无效的payload[%s]", util.ToJson(messageReq.Payload)))
 		return
 	}
-	robotID := c.Param("robot_id")
 	userResp, err := rb.userService.GetUserWithUsername(robotID)
 	if err != nil {
 		rb.Error("查询机器人的用户信息失败！", zap.Error(err))
@@ -295,9 +302,22 @@ func (rb *Robot) payloadIsVail(payloadResult maputil.Data) bool {
 }
 
 // 是否允许发送消息到频道
-func (rb *Robot) allowSendToChannel(channelID string, channelType uint8) bool {
-	// TODO：待完善
-	return true
+func (rb *Robot) allowSendToChannel(robotID string, channelID string, channelType uint8) bool {
+	if channelType == common.ChannelTypePerson.Uint8() {
+		// 个人频道允许机器人发送消息
+		return true
+	}
+	if channelType == common.ChannelTypeGroup.Uint8() {
+		// 群组频道需要检查机器人是否是群成员
+		exist, err := rb.groupService.ExistMember(channelID, robotID)
+		if err != nil {
+			rb.Error("检查机器人是否是频道成员失败！", zap.Error(err), zap.String("robotID", robotID), zap.String("channelID", channelID))
+			return false
+		}
+		return exist
+	}
+	// 未知频道类型，拒绝发送
+	return false
 }
 
 func (rb *Robot) answerInlineQuery(c *wkhttp.Context) {
