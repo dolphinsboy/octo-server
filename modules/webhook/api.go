@@ -209,7 +209,11 @@ func (w *Webhook) handleMessageNotify(messages []MsgResp) ([]string, error) {
 
 	confMessages := make([]*config.MessageResp, 0, len(messages))
 
-	tx, _ := w.ctx.DB().Begin()
+	tx, err := w.ctx.DB().Begin()
+	if err != nil {
+		w.Error("开启事务失败", zap.Error(err))
+		return nil, err
+	}
 	defer func() {
 		if err := recover(); err != nil {
 			tx.RollbackUnlessCommitted()

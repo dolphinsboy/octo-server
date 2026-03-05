@@ -22,7 +22,10 @@ func (s *shortnoDB) inserts(shortnos []string) error {
 	if len(shortnos) == 0 {
 		return nil
 	}
-	tx, _ := s.db.Begin()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
 	defer func() {
 		if err := recover(); err != nil {
 			tx.RollbackUnlessCommitted()
