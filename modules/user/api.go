@@ -2609,7 +2609,6 @@ func (u *User) createUserWithRespAndTx(registerSpanCtx context.Context, createUs
 
 	userModel := &Model{}
 	userModel.UID = createUser.UID
-	rand.Seed(time.Now().Unix())
 	if createUser.Name != "" {
 		userModel.Name = createUser.Name
 	} else {

@@ -118,9 +118,9 @@ func runGenShortnoTask(ctx *config.Context) {
 
 func generateNums(len int, count int) []string {
 	var nums = make([]string, 0, count)
-	rd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	
 	for i := count; i > 0; i-- {
-		var num = rd.Int63n(1e16)
+		var num = rand.Int63n(1e16)
 		nums = append(nums, fmt.Sprintf("%016d", num)[0:len])
 	}
 	return nums
