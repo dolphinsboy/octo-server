@@ -157,9 +157,8 @@ func (w *Webhook) Start() error {
 	wkhook.RegisterWebhookServiceServer(w.grpcServer, w)
 
 	go func() {
-		err = w.grpcServer.Serve(lis)
-		if err != nil {
-			panic(err)
+		if err := w.grpcServer.Serve(lis); err != nil {
+			w.Error("gRPC server stopped with error", zap.Error(err))
 		}
 	}()
 	return nil
