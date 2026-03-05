@@ -5,10 +5,10 @@ import (
 	"os"
 	"runtime/debug"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/base/event"
+	wkutil "github.com/Mininglamp-OSS/octo-server/pkg/util"
 	chservice "github.com/Mininglamp-OSS/octo-server/modules/channel/service"
 	"github.com/Mininglamp-OSS/octo-server/modules/source"
 	"github.com/Mininglamp-OSS/octo-lib/common"
@@ -120,8 +120,8 @@ func (f *Friend) apply(c *wkhttp.Context) {
 	loginUID := c.GetLoginUID()
 	page := c.Query("page_index")
 	size := c.Query("page_size")
-	pageIndex, _ := strconv.Atoi(page)
-	pageSize, _ := strconv.Atoi(size)
+	pageIndex := wkutil.AtoiOrDefault(page, 1)
+	pageSize := wkutil.AtoiOrDefault(size, 20)
 	applys, err := f.db.queryApplysWithPage(loginUID, uint64(pageSize), uint64(pageIndex))
 	if err != nil {
 		f.Error("查询好友申请列表错误", zap.Error(err))
@@ -756,12 +756,12 @@ func (f *Friend) friendSure(c *wkhttp.Context) {
 // 同步好友
 func (f *Friend) friendSync(c *wkhttp.Context) {
 	uid := c.MustGet("uid").(string)
-	limit, _ := strconv.ParseUint(c.Query("limit"), 10, 64)
+	limit := wkutil.ParseUint64OrDefault(c.Query("limit"), 0)
 	if limit <= 0 {
 		limit = 1000
 	}
-	version, _ := strconv.ParseInt(c.Query("version"), 10, 64)
-	apiVersion, _ := strconv.ParseInt(c.Query("api_version"), 10, 64)
+	version := wkutil.ParseInt64OrDefault(c.Query("version"), 0)
+	apiVersion := wkutil.ParseInt64OrDefault(c.Query("api_version"), 0)
 	var friends []*FriendModel
 	var err error
 	// 同步好友

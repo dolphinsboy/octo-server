@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/group"
+	"github.com/Mininglamp-OSS/octo-server/pkg/util"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
@@ -50,7 +50,7 @@ func (ch *Channel) Route(r *wkhttp.WKHttp) {
 func (ch *Channel) clearChannelMessages(c *wkhttp.Context) {
 	loginUID := c.GetLoginUID()
 	channelID := c.Param("channel_id")
-	channelTypeI64, _ := strconv.ParseInt(c.Param("channel_type"), 10, 64)
+	channelTypeI64 := util.ParseInt64OrDefault(c.Param("channel_type"), 0)
 	channelType := uint8(channelTypeI64)
 	if channelID == "" {
 		c.ResponseError(errors.New("频道Id不能为空"))
@@ -132,7 +132,7 @@ func (ch *Channel) clearChannelMessages(c *wkhttp.Context) {
 func (ch *Channel) channelGet(c *wkhttp.Context) {
 	loginUID := c.GetLoginUID()
 	channelID := c.Param("channel_id")
-	channelTypeI64, _ := strconv.ParseInt(c.Param("channel_type"), 10, 64)
+	channelTypeI64 := util.ParseInt64OrDefault(c.Param("channel_type"), 0)
 	channelType := uint8(channelTypeI64)
 
 	modules := register.GetModules(ch.ctx)
@@ -190,7 +190,7 @@ func (ch *Channel) channelGet(c *wkhttp.Context) {
 func (ch *Channel) state(c *wkhttp.Context) {
 	loginUID := c.GetLoginUID()
 	channelID := c.Query("channel_id")
-	channelTypeI64, _ := strconv.ParseInt(c.Query("channel_type"), 10, 64)
+	channelTypeI64 := util.ParseInt64OrDefault(c.Query("channel_type"), 0)
 
 	channelType := uint8(channelTypeI64)
 
@@ -263,7 +263,7 @@ func (ch *Channel) state(c *wkhttp.Context) {
 
 func (ch *Channel) setAutoDeleteForMessage(c *wkhttp.Context) {
 	channelID := c.Param("channel_id")
-	channelTypeI64, _ := strconv.ParseInt(c.Param("channel_type"), 10, 64)
+	channelTypeI64 := util.ParseInt64OrDefault(c.Param("channel_type"), 0)
 	channelType := uint8(channelTypeI64)
 
 	var req struct {

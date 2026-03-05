@@ -3,11 +3,11 @@ package wkhttp
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/Mininglamp-OSS/octo-server/pkg/cache"
+	"github.com/Mininglamp-OSS/octo-server/pkg/util"
 	"github.com/Mininglamp-OSS/octo-server/pkg/log"
 	"github.com/gin-gonic/gin"
 	"github.com/opentracing/opentracing-go"
@@ -86,14 +86,8 @@ func (c *Context) ResponseErrorWithStatus(err error, status int) {
 
 // GetPage 获取页参数
 func (c *Context) GetPage() (pageIndex int64, pageSize int64) {
-	pageIndex, _ = strconv.ParseInt(c.Query("page_index"), 10, 64)
-	pageSize, _ = strconv.ParseInt(c.Query("page_size"), 10, 64)
-	if pageIndex <= 0 {
-		pageIndex = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 15
-	}
+	pageIndex = util.ParseInt64OrDefault(c.Query("page_index"), 1)
+	pageSize = util.ParseInt64OrDefault(c.Query("page_size"), 15)
 	return
 }
 

@@ -2,10 +2,10 @@ package report
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/group"
+	wkutil "github.com/Mininglamp-OSS/octo-server/pkg/util"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
@@ -58,7 +58,7 @@ func (m *Manager) reportList(c *wkhttp.Context) {
 		c.ResponseError(errors.New("查询频道类型不能为空"))
 		return
 	}
-	queryChannelType, _ := strconv.Atoi(channelType)
+	queryChannelType := wkutil.AtoiOrDefault(channelType, 0)
 	list, err := m.managerDB.list(uint64(pageSize), uint64(pageIndex), queryChannelType)
 	if err != nil {
 		m.Error("查询举报列表错误", zap.Error(err))

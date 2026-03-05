@@ -7,12 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/util"
+	pkgutil "github.com/Mininglamp-OSS/octo-server/pkg/util"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp"
 	"go.uber.org/zap"
 )
@@ -91,7 +91,7 @@ func (m *Manager) delete(c *wkhttp.Context) {
 		return
 	}
 	robot_id := c.Param("robot_id")
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id := pkgutil.ParseInt64OrDefault(c.Param("id"), 0)
 	if robot_id == "" {
 		c.ResponseError(errors.New("机器人ID不能为空"))
 		return
@@ -150,7 +150,7 @@ func (m *Manager) updateRobotStatus(c *wkhttp.Context) {
 		return
 	}
 	robot_id := c.Param("robot_id")
-	status, _ := strconv.ParseInt(c.Param("status"), 10, 64)
+	status := pkgutil.ParseInt64OrDefault(c.Param("status"), 0)
 
 	if robot_id == "" {
 		c.ResponseError(errors.New("机器人ID不能为空"))
@@ -193,8 +193,8 @@ func (m *Manager) robotList(c *wkhttp.Context) {
 		c.ResponseError(err)
 		return
 	}
-	pageIndex, _ := strconv.Atoi(c.Query("page_index"))
-	pageSize, _ := strconv.Atoi(c.Query("page_size"))
+	pageIndex := pkgutil.AtoiOrDefault(c.Query("page_index"), 1)
+	pageSize := pkgutil.AtoiOrDefault(c.Query("page_size"), 20)
 	if pageSize <= 0 || pageSize > 100 {
 		pageSize = 20
 	}

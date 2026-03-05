@@ -5,11 +5,11 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/base/event"
+	wkutil "github.com/Mininglamp-OSS/octo-server/pkg/util"
 	common2 "github.com/Mininglamp-OSS/octo-server/modules/common"
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
@@ -537,7 +537,7 @@ func (m *Manager) list(c *wkhttp.Context) {
 
 	var online int64 = -1
 	if strings.TrimSpace(onlineStr) != "" {
-		online, _ = strconv.ParseInt(onlineStr, 10, 64)
+		online = wkutil.ParseInt64OrDefault(onlineStr, -1)
 	}
 	pageIndex, pageSize := c.GetPage()
 	var userList []*managerUserModel
@@ -670,10 +670,7 @@ func (m *Manager) friends(c *wkhttp.Context) {
 	if sortType == "" {
 		sortType = "1"
 	}
-	sortTypeInt, err := strconv.Atoi(sortType)
-	if err != nil {
-		sortTypeInt = 0
-	}
+	sortTypeInt := wkutil.AtoiOrDefault(sortType, 0)
 	list, err := m.friendDB.QueryFriends(uid)
 	if err != nil {
 		m.Error("查询用户好友错误", zap.String("uid", uid))
@@ -845,7 +842,7 @@ func (m *Manager) liftBanUser(c *wkhttp.Context) {
 		c.ResponseError(errors.New("修改状态类型不能为空"))
 		return
 	}
-	userStatus, _ := strconv.Atoi(status)
+	userStatus := wkutil.AtoiOrDefault(status, 0)
 	if userStatus != int(common.UserAvailable) && userStatus != int(common.UserDisable) {
 		c.ResponseError(errors.New("修改状态类型不匹配"))
 		return
