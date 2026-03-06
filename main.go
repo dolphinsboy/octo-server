@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -39,7 +40,7 @@ func main() {
 	flag.StringVar(&CfgFile, "config", "configs/tsdd.yaml", "config file")
 	flag.Parse()
 	vp := loadConfigFromFile(CfgFile)
-	vp.SetEnvPrefix("ts")
+	vp.SetEnvPrefix("TS")
 	vp.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	vp.AutomaticEnv()
 
@@ -97,7 +98,11 @@ func runAPI(ctx *config.Context) {
 	cn := cron.New()
 	//定时发布事件 每59秒执行一次
 	err = cn.AddFunc("0/59 * * * * ?", func() {
-		ctx.Event.(*event.Event).EventTimerPush()
+		if ev, ok := ctx.Event.(*event.Event); ok {
+			ev.EventTimerPush()
+		} else {
+			log.Warn("ctx.Event is not *event.Event, skipping timer push")
+		}
 	})
 	if err != nil {
 		panic(err)
@@ -182,7 +187,13 @@ func ingorePaths() []string {
 
 func replaceWebConfig(cfg *config.Config) {
 	path := "./assets/web/js/config.js"
-	newConfigContent := fmt.Sprintf(`const apiURL = "%s/"`, cfg.External.APIBaseURL)
-	os.WriteFile(path, []byte(newConfigContent), 0644)
-
+	escapedURL, err := json.Marshal(cfg.External.APIBaseURL + "/")
+	if err != nil {
+		log.Error("failed to marshal APIBaseURL", "error", err)
+		return
+	}
+	newConfigContent := fmt.Sprintf(`const apiURL = %s`, string(escapedURL))
+	if err := os.WriteFile(path, []byte(newConfigContent), 0644); err != nil {
+		log.Error("failed to write web config", "path", path, "error", err)
+	}
 }
