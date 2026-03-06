@@ -3,7 +3,8 @@ package common
 import (
 	"errors"
 	"fmt"
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 	"sync"
 	"time"
 
@@ -116,12 +117,17 @@ func runGenShortnoTask(ctx *config.Context) {
 	}
 }
 
-func generateNums(len int, count int) []string {
+func generateNums(length int, count int) []string {
 	var nums = make([]string, 0, count)
 	
 	for i := count; i > 0; i-- {
-		var num = rand.Int63n(1e16)
-		nums = append(nums, fmt.Sprintf("%016d", num)[0:len])
+		max := big.NewInt(1e16)
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			panic(fmt.Sprintf("crypto/rand failed: %v", err))
+		}
+		var num = n.Int64()
+		nums = append(nums, fmt.Sprintf("%016d", num)[0:length])
 	}
 	return nums
 
