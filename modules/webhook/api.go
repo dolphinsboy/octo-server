@@ -311,16 +311,36 @@ func (w *Webhook) handleOnlineStatus(data []byte) error {
 		if len(onlineStatusSplits) < 3 {
 			continue
 		}
-		uid := onlineStatusSplits[0]                                         // uid
-		deviceFlagI64, _ := strconv.ParseUint(onlineStatusSplits[1], 10, 64) // 设备标记
-		statusI64, _ := strconv.ParseUint(onlineStatusSplits[2], 10, 64)     // 在线状态 0.离线 1.在线
+		uid := onlineStatusSplits[0] // uid
+		deviceFlagI64, err := strconv.ParseUint(onlineStatusSplits[1], 10, 64)
+		if err != nil {
+			w.Error("解析设备标志失败", zap.Error(err), zap.String("value", onlineStatusSplits[1]))
+			continue
+		}
+		statusI64, err := strconv.ParseUint(onlineStatusSplits[2], 10, 64)
+		if err != nil {
+			w.Error("解析在线状态失败", zap.Error(err), zap.String("value", onlineStatusSplits[2]))
+			continue
+		}
 		var socketID int64
 		var onlineCount int
 		var totalOnlineCount int
 		if len(onlineStatusSplits) >= 6 {
-			socketID, _ = strconv.ParseInt(onlineStatusSplits[3], 10, 64)             // socketID
-			onlineCountI64, _ := strconv.ParseInt(onlineStatusSplits[4], 10, 64)      // 在线数量 当前DeviceFlag下的在线设备数量
-			totalOnlineCountI64, _ := strconv.ParseInt(onlineStatusSplits[5], 10, 64) // 在线数量 用户下所有设备的在线数量
+			socketID, err = strconv.ParseInt(onlineStatusSplits[3], 10, 64)
+			if err != nil {
+				w.Error("解析socketID失败", zap.Error(err), zap.String("value", onlineStatusSplits[3]))
+				continue
+			}
+			onlineCountI64, err := strconv.ParseInt(onlineStatusSplits[4], 10, 64)
+			if err != nil {
+				w.Error("解析在线数量失败", zap.Error(err), zap.String("value", onlineStatusSplits[4]))
+				continue
+			}
+			totalOnlineCountI64, err := strconv.ParseInt(onlineStatusSplits[5], 10, 64)
+			if err != nil {
+				w.Error("解析总在线数量失败", zap.Error(err), zap.String("value", onlineStatusSplits[5]))
+				continue
+			}
 			onlineCount = int(onlineCountI64)
 			totalOnlineCount = int(totalOnlineCountI64)
 		}

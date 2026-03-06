@@ -558,8 +558,16 @@ func (rb *Robot) getEventsForPost(c *wkhttp.Context) {
 func (rb *Robot) getEventsForGet(c *wkhttp.Context) {
 	robotID := c.Param("robot_id")
 	eventID := c.Query("event_id")
-	limit, _ := strconv.ParseInt(c.Query("limit"), 10, 64)
-	eventIDI64, _ := strconv.ParseInt(eventID, 10, 64)
+	limit, err := strconv.ParseInt(c.Query("limit"), 10, 64)
+	if err != nil {
+		limit = 0
+		rb.Warn("解析limit参数失败", zap.Error(err), zap.String("value", c.Query("limit")))
+	}
+	eventIDI64, err := strconv.ParseInt(eventID, 10, 64)
+	if err != nil {
+		eventIDI64 = 0
+		rb.Warn("解析event_id参数失败", zap.Error(err), zap.String("value", eventID))
+	}
 
 	results, err := rb.getEventsResult(robotID, eventIDI64, limit)
 	if err != nil {
@@ -579,9 +587,14 @@ func (rb *Robot) getEventsForGet(c *wkhttp.Context) {
 
 func (rb *Robot) eventAck(c *wkhttp.Context) {
 	robotID := c.Param("robot_id")
-	eventID, _ := strconv.ParseInt(c.Param("event_id"), 10, 64)
+	eventID, err := strconv.ParseInt(c.Param("event_id"), 10, 64)
+	if err != nil {
+		rb.Error("解析event_id参数失败", zap.Error(err), zap.String("value", c.Param("event_id")))
+		c.ResponseError(errors.New("event_id格式错误"))
+		return
+	}
 
-	err := rb.removeEvent(robotID, eventID)
+	err = rb.removeEvent(robotID, eventID)
 	if err != nil {
 		c.ResponseError(err)
 		return
