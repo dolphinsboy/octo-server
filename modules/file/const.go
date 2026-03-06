@@ -57,6 +57,8 @@ var allowedExtensions = map[string]bool{
 	// 其他
 	".json": true, ".xml": true, ".yaml": true, ".yml": true,
 	".log": true,
+	// 文本/标记语言
+	".md": true, ".html": true, ".htm": true,
 }
 
 // blockedExtensions 禁止上传的文件扩展名（可执行文件）

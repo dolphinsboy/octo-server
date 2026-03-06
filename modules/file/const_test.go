@@ -58,8 +58,11 @@ func TestIsAllowedExtension(t *testing.T) {
 		// 其他允许
 		{"json allowed", ".json", true},
 		{"xml allowed", ".xml", true},
-		{"apk allowed", ".apk", true},
-		{"ipa allowed", ".ipa", true},
+
+		// 文本/标记语言
+		{"md allowed", ".md", true},
+		{"html allowed", ".html", true},
+		{"htm allowed", ".htm", true},
 
 		// 被禁止的可执行文件 — IsAllowedExtension 应返回 false
 		{"exe blocked", ".exe", false},
@@ -302,6 +305,7 @@ func TestIsBlockedExtension_AllEntries(t *testing.T) {
 		".exe", ".bat", ".sh", ".cmd", ".msi", ".dll", ".com", ".scr", ".pif",
 		".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".ps1",
 		".sys", ".cpl", ".inf", ".reg",
+		".apk", ".ipa",
 		".php", ".jsp", ".asp", ".aspx", ".cgi", ".py", ".rb", ".pl",
 	}
 	for _, ext := range allBlocked {
@@ -318,7 +322,8 @@ func TestIsAllowedExtension_AllEntries(t *testing.T) {
 		".mp3", ".wav", ".aac", ".flac", ".ogg", ".wma", ".m4a", ".amr",
 		".mp4", ".avi", ".mov", ".wmv", ".flv", ".mkv", ".webm", ".m4v",
 		".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz",
-		".json", ".xml", ".yaml", ".yml", ".apk", ".ipa", ".log",
+		".json", ".xml", ".yaml", ".yml", ".log",
+		".md", ".html", ".htm",
 	}
 	for _, ext := range allAllowed {
 		assert.True(t, IsAllowedExtension(ext), "%s should be allowed", ext)
