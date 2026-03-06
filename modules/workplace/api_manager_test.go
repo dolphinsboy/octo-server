@@ -73,8 +73,7 @@ func TestGetBanners(t *testing.T) {
 	w := httptest.NewRecorder()
 	req.Header.Set("token", testutil.Token)
 	s.GetRoute().ServeHTTP(w, req)
-	panic(w.Body)
-	// assert.Equal(t, true, strings.Contains(w.Body.String(), `"cover":"cover_1122"`))
+	assert.Equal(t, true, strings.Contains(w.Body.String(), `"cover":"cover_1122"`))
 }
 func TestUpdateBanner(t *testing.T) {
 	s, ctx := testutil.NewTestServer()
@@ -122,7 +121,7 @@ func TestDeleteBanner(t *testing.T) {
 		Route:       "moment",
 	})
 	assert.NoError(t, err)
-	req, _ := http.NewRequest("DELETE", fmt.Sprintf("/v1/manager/workplace/banner?banner_no=%s", bannerNo), nil)
+	req, _ := http.NewRequest("DELETE", fmt.Sprintf("/v1/manager/workplace/banners/%s", bannerNo), nil)
 	w := httptest.NewRecorder()
 	req.Header.Set("token", testutil.Token)
 	s.GetRoute().ServeHTTP(w, req)
@@ -377,7 +376,7 @@ func TestGetCategoryApps(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	req, _ := http.NewRequest("GET", fmt.Sprintf("/v1/manager/workplace/category/app?category_no=%s", categoryNo), nil)
+	req, _ := http.NewRequest("GET", fmt.Sprintf("/v1/manager/workplace/categorys/%s/app", categoryNo), nil)
 	w := httptest.NewRecorder()
 	req.Header.Set("token", testutil.Token)
 	s.GetRoute().ServeHTTP(w, req)
@@ -412,9 +411,8 @@ func TestReorderCategoryApp(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	req, _ := http.NewRequest("PUT", "/v1/manager/workplace/category/app/reorder", bytes.NewReader([]byte(util.ToJson(map[string]interface{}{
-		"app_ids":     []string{appId1, appId2},
-		"category_no": categoryNo,
+	req, _ := http.NewRequest("PUT", fmt.Sprintf("/v1/manager/workplace/categorys/%s/app/reorder", categoryNo), bytes.NewReader([]byte(util.ToJson(map[string]interface{}{
+		"app_ids": []string{appId1, appId2},
 	}))))
 	w := httptest.NewRecorder()
 	req.Header.Set("token", testutil.Token)
@@ -473,9 +471,8 @@ func TestAddCategoryApp(t *testing.T) {
 		IsPaidApp:   0,
 	})
 	assert.NoError(t, err)
-	req, _ := http.NewRequest("POST", "/v1/manager/workplace/category/app", bytes.NewReader([]byte(util.ToJson(map[string]interface{}{
-		"app_ids":     []string{appId1, appId2},
-		"category_no": categoryNo,
+	req, _ := http.NewRequest("POST", fmt.Sprintf("/v1/manager/workplace/categorys/%s/app", categoryNo), bytes.NewReader([]byte(util.ToJson(map[string]interface{}{
+		"app_ids": []string{appId1, appId2},
 	}))))
 	w := httptest.NewRecorder()
 	req.Header.Set("token", testutil.Token)
@@ -534,7 +531,7 @@ func TestDeleteCategoryApp(t *testing.T) {
 		IsPaidApp:   0,
 	})
 	assert.NoError(t, err)
-	req, _ := http.NewRequest("DELETE", fmt.Sprintf("/v1/manager/workplace/category/app?category_no=%s&app_id=%s", categoryNo, appId1), nil)
+	req, _ := http.NewRequest("DELETE", fmt.Sprintf("/v1/manager/workplace/categorys/%s/apps/%s", categoryNo, appId1), nil)
 	w := httptest.NewRecorder()
 	req.Header.Set("token", testutil.Token)
 	s.GetRoute().ServeHTTP(w, req)

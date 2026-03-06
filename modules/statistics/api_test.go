@@ -64,5 +64,5 @@ func TestGroupWithDateSpace(t *testing.T) {
 	req, _ := http.NewRequest("GET", "/v1/statistics/createdgroup/2021-03-03/2021-03-03", nil)
 	req.Header.Set("token", testutil.Token)
 	s.GetRoute().ServeHTTP(w, req)
-	panic(w.Body)
+	assert.Equal(t, http.StatusOK, w.Code)
 }

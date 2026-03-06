@@ -342,7 +342,7 @@ func TestDeleteRecord(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("DELETE", fmt.Sprintf("/v1/workplace/%s/app", appId), nil)
+	req, _ := http.NewRequest("DELETE", fmt.Sprintf("/v1/workplace/apps/%s/record", appId), nil)
 	req.Header.Set("token", token)
 	s.GetRoute().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
