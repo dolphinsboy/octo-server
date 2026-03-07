@@ -48,6 +48,20 @@ func (m *Message) pinnedMessage(c *wkhttp.Context) {
 
 	fakeChannelID := req.ChannelID
 	if req.ChannelType == common.ChannelTypePerson.Uint8() {
+		if loginUID == req.ChannelID {
+			c.ResponseError(errors.New("频道ID不合法"))
+			return
+		}
+		isFriend, err := m.userService.IsFriend(loginUID, req.ChannelID)
+		if err != nil {
+			m.Error("查询好友关系错误", zap.Error(err))
+			c.ResponseError(errors.New("查询好友关系错误"))
+			return
+		}
+		if !isFriend {
+			c.ResponseError(errors.New("无权操作此会话"))
+			return
+		}
 		fakeChannelID = common.GetFakeChannelIDWith(loginUID, req.ChannelID)
 	} else if req.ChannelType == common.ChannelTypeGroup.Uint8() {
 		groupInfo, err := m.groupService.GetGroupDetail(req.ChannelID, loginUID)
@@ -274,6 +288,20 @@ func (m *Message) clearPinnedMessage(c *wkhttp.Context) {
 	}
 	fakeChannelID := req.ChannelID
 	if req.ChannelType == common.ChannelTypePerson.Uint8() {
+		if loginUID == req.ChannelID {
+			c.ResponseError(errors.New("频道ID不合法"))
+			return
+		}
+		isFriend, err := m.userService.IsFriend(loginUID, req.ChannelID)
+		if err != nil {
+			m.Error("查询好友关系错误", zap.Error(err))
+			c.ResponseError(errors.New("查询好友关系错误"))
+			return
+		}
+		if !isFriend {
+			c.ResponseError(errors.New("无权操作此会话"))
+			return
+		}
 		fakeChannelID = common.GetFakeChannelIDWith(loginUID, req.ChannelID)
 	} else {
 		// 查询权限
@@ -416,6 +444,20 @@ func (m *Message) syncPinnedMessage(c *wkhttp.Context) {
 	}
 	fakeChannelID := req.ChannelID
 	if req.ChannelType == common.ChannelTypePerson.Uint8() {
+		if loginUID == req.ChannelID {
+			c.ResponseError(errors.New("频道ID不合法"))
+			return
+		}
+		isFriend, err := m.userService.IsFriend(loginUID, req.ChannelID)
+		if err != nil {
+			m.Error("查询好友关系错误", zap.Error(err))
+			c.ResponseError(errors.New("查询好友关系错误"))
+			return
+		}
+		if !isFriend {
+			c.ResponseError(errors.New("无权操作此会话"))
+			return
+		}
 		fakeChannelID = common.GetFakeChannelIDWith(loginUID, req.ChannelID)
 	}
 	pinnedMsgs, err := m.pinnedDB.queryWithChannelIDAndVersion(fakeChannelID, req.ChannelType, req.Version)
