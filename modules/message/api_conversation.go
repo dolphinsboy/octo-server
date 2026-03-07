@@ -512,15 +512,13 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 			// 缓存频道对应的最新的消息messageSeq
 			if !co.ctx.GetConfig().MessageSaveAcrossDevice {
 
-				co.syncConversationResultCacheLock.RLock()
-				channelMessageSeqs := co.syncConversationResultCacheMap[userKey]
-				co.syncConversationResultCacheLock.RUnlock()
-				if channelMessageSeqs == nil {
-					channelMessageSeqs = make([]string, 0)
-				}
 				if len(syncUserConversationResp.Recents) > 0 {
-					channelMessageSeqs = append(channelMessageSeqs, co.channelMessageSeqJoin(conversation.ChannelID, conversation.ChannelType, syncUserConversationResp.Recents[0].MessageSeq))
 					co.syncConversationResultCacheLock.Lock()
+					channelMessageSeqs := co.syncConversationResultCacheMap[userKey]
+					if channelMessageSeqs == nil {
+						channelMessageSeqs = make([]string, 0)
+					}
+					channelMessageSeqs = append(channelMessageSeqs, co.channelMessageSeqJoin(conversation.ChannelID, conversation.ChannelType, syncUserConversationResp.Recents[0].MessageSeq))
 					co.syncConversationResultCacheMap[userKey] = channelMessageSeqs
 					co.syncConversationResultCacheLock.Unlock()
 				}
@@ -637,9 +635,10 @@ func (co *Conversation) syncUserConversationAck(c *wkhttp.Context) {
 	loginUID := c.GetLoginUID()
 	userKey := loginUID
 
-	co.syncConversationResultCacheLock.RLock()
+	co.syncConversationResultCacheLock.Lock()
 	channelMessageSeqStrs := co.syncConversationResultCacheMap[userKey]
-	co.syncConversationResultCacheLock.RUnlock()
+	delete(co.syncConversationResultCacheMap, userKey)
+	co.syncConversationResultCacheLock.Unlock()
 
 	userLastOffsetModels := make([]*userLastOffsetModel, 0, len(channelMessageSeqStrs))
 	if len(channelMessageSeqStrs) > 0 {
@@ -672,9 +671,10 @@ func (co *Conversation) syncUserConversationAck(c *wkhttp.Context) {
 			return
 		}
 	}
-	co.syncConversationResultCacheLock.RLock()
+	co.syncConversationResultCacheLock.Lock()
 	version := co.syncConversationVersionMap[userKey]
-	co.syncConversationResultCacheLock.RUnlock()
+	delete(co.syncConversationVersionMap, userKey)
+	co.syncConversationResultCacheLock.Unlock()
 	if version > 0 {
 		err := co.setUserConversationMaxVersion(loginUID, version)
 		if err != nil {
