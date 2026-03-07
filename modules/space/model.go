@@ -92,13 +92,14 @@ type memberResp struct {
 }
 
 type inviteResp struct {
-	InviteCode string `json:"invite_code"`
-	SpaceId    string `json:"space_id"`
-	SpaceName  string `json:"space_name"`
-	Creator    string `json:"creator"`
-	MaxUses    int    `json:"max_uses"`
-	UsedCount  int    `json:"used_count"`
-	ExpiresAt  string `json:"expires_at"`
+	InviteCode  string `json:"invite_code"`
+	SpaceId     string `json:"space_id"`
+	SpaceName   string `json:"space_name"`
+	Creator     string `json:"creator"`
+	MaxUses     int    `json:"max_uses"`
+	UsedCount   int    `json:"used_count"`
+	ExpiresAt   string `json:"expires_at"`
+	MemberCount int    `json:"member_count"`
 }
 
 // MemberDetailModel 带用户名的成员详情

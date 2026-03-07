@@ -665,14 +665,23 @@ func (s *Space) getInviteInfo(c *wkhttp.Context) {
 		expiresAtStr = time.Time(*invitation.ExpiresAt).Format("2006-01-02 15:04:05")
 	}
 
+	// 查询 Space 成员数
+	memberCount := 0
+	var cnt struct {
+		Count int `db:"count"`
+	}
+	_, _ = s.ctx.DB().SelectBySql("SELECT COUNT(*) as count FROM space_member WHERE space_id=? AND status=1", invitation.SpaceId).Load(&cnt)
+	memberCount = cnt.Count
+
 	c.Response(inviteResp{
-		InviteCode: invitation.InviteCode,
-		SpaceId:    invitation.SpaceId,
-		SpaceName:  space.Name,
-		Creator:    invitation.Creator,
-		MaxUses:    invitation.MaxUses,
-		UsedCount:  invitation.UsedCount,
-		ExpiresAt:  expiresAtStr,
+		InviteCode:  invitation.InviteCode,
+		SpaceId:     invitation.SpaceId,
+		SpaceName:   space.Name,
+		Creator:     invitation.Creator,
+		MaxUses:     invitation.MaxUses,
+		UsedCount:   invitation.UsedCount,
+		ExpiresAt:   expiresAtStr,
+		MemberCount: memberCount,
 	})
 }
 
