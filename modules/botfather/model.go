@@ -78,3 +78,33 @@ type BotInfo struct {
 	CreatorUID  string `json:"creator_uid"`
 	Status      int    `json:"status"`
 }
+
+// RobotApplyReq 申请使用AI的请求
+type RobotApplyReq struct {
+	RobotUID string `json:"robot_uid"`
+	Remark   string `json:"remark"`
+}
+
+// RobotApplySureReq Owner通过申请的请求
+type RobotApplySureReq struct {
+	ApplyID int64 `json:"apply_id"`
+}
+
+// RobotApplyResp 申请记录响应
+type RobotApplyResp struct {
+	ID           int64  `json:"id"`
+	UID          string `json:"uid"`
+	RobotUID     string `json:"robot_uid"`
+	RobotName    string `json:"robot_name"`
+	ApplicantName string `json:"applicant_name"`
+	OwnerUID     string `json:"owner_uid"`
+	Remark       string `json:"remark"`
+	Status       int    `json:"status"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// RobotApplyListResp 申请列表响应
+type RobotApplyListResp struct {
+	List  []*RobotApplyResp `json:"list"`
+	Count int64             `json:"count"`
+}

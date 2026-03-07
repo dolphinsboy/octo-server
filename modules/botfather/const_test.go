@@ -74,7 +74,8 @@ func TestFieldConstants(t *testing.T) {
 }
 
 func TestGenerateBotToken(t *testing.T) {
-	token := generateBotToken()
+	token, err := generateBotToken()
+	assert.NoError(t, err)
 
 	// 应以 BotTokenPrefix 开头
 	assert.True(t, strings.HasPrefix(token, BotTokenPrefix),
@@ -95,7 +96,8 @@ func TestGenerateBotToken(t *testing.T) {
 func TestGenerateBotToken_Uniqueness(t *testing.T) {
 	tokens := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		token := generateBotToken()
+		token, err := generateBotToken()
+		assert.NoError(t, err)
 		assert.False(t, tokens[token], "duplicate token generated")
 		tokens[token] = true
 	}
@@ -116,7 +118,8 @@ func TestRandomHex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hex := randomHex(tt.n)
+			hex, err := randomHex(tt.n)
+			assert.NoError(t, err)
 			assert.Len(t, hex, tt.wantLen, "randomHex(%d) should return %d chars", tt.n, tt.wantLen)
 
 			// 所有字符应为合法16进制
@@ -311,7 +314,8 @@ func TestBotNameValidation(t *testing.T) {
 
 func TestBotTokenPrefix_Format(t *testing.T) {
 	// Token 以 bf_ 开头
-	token := generateBotToken()
+	token, err := generateBotToken()
+	assert.NoError(t, err)
 	assert.True(t, strings.HasPrefix(token, "bf_"))
 
 	// Token 长度应为 bf_ (3) + 32 hex chars = 35

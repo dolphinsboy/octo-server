@@ -32,6 +32,7 @@ type robotModel struct {
 	BotToken     string
 	IMTokenCache string
 	BotCommands  string
+	AccessMode   int // 0=需要审批 1=自动通过 2=禁止申请
 	db.BaseModel
 }
 

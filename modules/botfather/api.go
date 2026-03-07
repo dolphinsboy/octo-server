@@ -87,6 +87,9 @@ func (bf *BotFather) Route(r *wkhttp.WKHttp) {
 		botAPI.POST("/setCommands", bf.setCommands)
 	}
 
+	// Robot Apply API 端点（使用用户认证）
+	bf.setupApplyRoutes(r)
+
 	// 初始化BotFather系统用户（使用sync.Once确保只执行一次）
 	bf.initOnce.Do(func() {
 		bf.initBotFatherUser()
