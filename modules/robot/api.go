@@ -88,7 +88,9 @@ func (rb *Robot) Route(r *wkhttp.WKHttp) {
 
 	}
 
-	rb.insertSystemRobot()
+	if err := rb.insertSystemRobot(); err != nil {
+		rb.Error("初始化系统机器人失败", zap.Error(err))
+	}
 }
 
 func (rb *Robot) streamStart(c *wkhttp.Context) {
@@ -607,18 +609,18 @@ func (rb *Robot) eventAck(c *wkhttp.Context) {
 
 }
 
-func (rb *Robot) insertSystemRobot() {
+func (rb *Robot) insertSystemRobot() error {
 	robotID := rb.ctx.GetConfig().Account.SystemUID
 	m, err := rb.db.queryRobotWithRobtID(robotID)
 	if err != nil {
 		rb.Error("查询系统机器人错误", zap.Error(err))
-		panic(err)
+		return err
 	}
 	if m == nil {
 		tx, err := rb.db.session.Begin()
 		if err != nil {
 			rb.Error("开启事物错误", zap.Error(err))
-			return
+			return err
 		}
 		defer func() {
 			if err := recover(); err != nil {
@@ -630,7 +632,7 @@ func (rb *Robot) insertSystemRobot() {
 		if err != nil {
 			tx.Rollback()
 			rb.Error("GenSeq failed", zap.Error(err))
-			return
+			return err
 		}
 		err = rb.db.insertTx(&robot{
 			RobotID: robotID,
@@ -641,7 +643,7 @@ func (rb *Robot) insertSystemRobot() {
 		if err != nil {
 			tx.Rollback()
 			rb.Error("添加系统机器人错误", zap.Error(err))
-			panic(err)
+			return err
 		}
 		list := make([]*menu, 0)
 		for _, m := range systemRobotMap {
@@ -657,16 +659,17 @@ func (rb *Robot) insertSystemRobot() {
 			if err != nil {
 				tx.Rollback()
 				rb.Error("添加系统机器人菜单错误", zap.Error(err))
-				panic(err)
+				return err
 			}
 		}
 		err = tx.Commit()
 		if err != nil {
 			tx.RollbackUnlessCommitted()
 			rb.Error("添加系统机器人事物提交失败", zap.Error(err))
-			panic(err)
+			return err
 		}
 	}
+	return nil
 }
 
 // 查询机器人命令列表
