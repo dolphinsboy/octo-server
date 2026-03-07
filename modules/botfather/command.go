@@ -837,11 +837,12 @@ Read %s/v1/bot/skill.md to connect to DMWork messaging.
 My bot token is: %s
 API server: %s
 Install adapter: openclaw plugins install openclaw-channel-dmwork
-Configure in ~/.openclaw/openclaw.json:
-{"channels":{"dmwork":{"botToken":"YOUR_TOKEN","apiUrl":"API_SERVER"}}}
-Replace YOUR_TOKEN and API_SERVER with the values above.
-For multi-bot on one instance, also add: {"session":{"dmScope":"per-account-channel-peer"}}
-IMPORTANT: Do NOT run "openclaw gateway restart" — the gateway auto-detects config changes and reloads after this conversation ends.
+
+IMPORTANT - Check existing config first:
+1. Read ~/.openclaw/openclaw.json
+2. If channels.dmwork already exists with another bot, you must use dmScope to isolate sessions — see skill.md multi-agent guide
+3. If channels.dmwork does not exist, add it with botToken and apiUrl
+4. Do NOT run "openclaw gateway restart" — the gateway auto-detects config changes
 Simply confirm the steps are complete and stop.
 ---
 
