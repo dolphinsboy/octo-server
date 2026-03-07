@@ -2372,33 +2372,90 @@ func (u *User) addFileHelperFriend(uid string) error {
 	return nil
 }
 
-// addBotFatherFriend 处理注册用户和BotFather成为好友
+// addBotFatherFriend 处理注册用户和BotFather互为好友（双向记录 + 白名单 + CMD同步）
 func (u *User) addBotFatherFriend(uid string) error {
 	const botFatherUID = "botfather"
 	if uid == "" {
 		return errors.New("用户ID不能为空")
 	}
+
+	// 检查正向好友关系
 	isFriend, err := u.friendDB.IsFriend(uid, botFatherUID)
 	if err != nil {
-		u.Error("查询用户与BotFather关系失败")
+		u.Error("查询用户与BotFather关系失败", zap.Error(err))
 		return err
 	}
-	if !isFriend {
-		version, err := u.ctx.GenSeq(common.FriendSeqKey)
-		if err != nil {
-			u.Error("GenSeq failed", zap.Error(err))
-			return err
-		}
-		err = u.friendDB.Insert(&FriendModel{
-			UID:     uid,
-			ToUID:   botFatherUID,
-			Version: version,
-		})
-		if err != nil {
-			u.Error("注册用户和BotFather成为好友失败")
-			return err
-		}
+	if isFriend {
+		return nil
 	}
+
+	// 正向：uid → botfather
+	version, err := u.ctx.GenSeq(common.FriendSeqKey)
+	if err != nil {
+		u.Error("GenSeq failed", zap.Error(err))
+		return err
+	}
+	err = u.friendDB.Insert(&FriendModel{
+		UID:     uid,
+		ToUID:   botFatherUID,
+		Version: version,
+	})
+	if err != nil {
+		u.Error("注册用户和BotFather成为好友失败", zap.Error(err))
+		return err
+	}
+
+	// 反向：botfather → uid
+	version2, err := u.ctx.GenSeq(common.FriendSeqKey)
+	if err != nil {
+		u.Error("GenSeq failed", zap.Error(err))
+		return err
+	}
+	err = u.friendDB.Insert(&FriendModel{
+		UID:     botFatherUID,
+		ToUID:   uid,
+		Version: version2,
+	})
+	if err != nil {
+		u.Error("BotFather和注册用户成为好友失败", zap.Error(err))
+		return err
+	}
+
+	// 双向IM白名单
+	err = u.ctx.IMWhitelistAdd(config.ChannelWhitelistReq{
+		ChannelReq: config.ChannelReq{
+			ChannelID:   uid,
+			ChannelType: common.ChannelTypePerson.Uint8(),
+		},
+		UIDs: []string{botFatherUID},
+	})
+	if err != nil {
+		u.Error("添加IM白名单失败(user->botfather)", zap.Error(err))
+	}
+	err = u.ctx.IMWhitelistAdd(config.ChannelWhitelistReq{
+		ChannelReq: config.ChannelReq{
+			ChannelID:   botFatherUID,
+			ChannelType: common.ChannelTypePerson.Uint8(),
+		},
+		UIDs: []string{uid},
+	})
+	if err != nil {
+		u.Error("添加IM白名单失败(botfather->user)", zap.Error(err))
+	}
+
+	// 发送好友同步CMD，通知客户端更新好友列表
+	err = u.ctx.SendCMD(config.MsgCMDReq{
+		CMD:         common.CMDFriendAccept,
+		Subscribers: []string{uid, botFatherUID},
+		Param: map[string]interface{}{
+			"to_uid":   uid,
+			"from_uid": botFatherUID,
+		},
+	})
+	if err != nil {
+		u.Error("发送BotFather好友同步CMD失败", zap.Error(err))
+	}
+
 	return nil
 }
 
