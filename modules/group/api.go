@@ -620,6 +620,7 @@ func (g *Group) groupCreate(c *wkhttp.Context) {
 		Status:              GroupStatusNormal,
 		Version:             version,
 		AllowViewHistoryMsg: int(common.GroupAllowViewHistoryMsgEnabled),
+		SpaceID:             req.SpaceID,
 	}, tx)
 	if err != nil {
 		g.Error("添加群失败！", zap.Error(err))
@@ -3039,8 +3040,9 @@ func (r memberDetailResp) from(model *MemberDetailModel) memberDetailResp {
 }
 
 type groupReq struct {
-	Name    string   `json:"name"`    // 群名
-	Members []string `json:"members"` // 成员uid
+	Name    string   `json:"name"`     // 群名
+	Members []string `json:"members"`  // 成员uid
+	SpaceID string   `json:"space_id"` // Space ID（可选）
 }
 
 func (g groupReq) Check() error {

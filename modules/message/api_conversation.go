@@ -15,6 +15,7 @@ import (
 	chservice "github.com/Mininglamp-OSS/octo-server/modules/channel/service"
 	"github.com/Mininglamp-OSS/octo-server/modules/group"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
+	spacepkg "github.com/Mininglamp-OSS/octo-server/pkg/space"
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/model"
@@ -235,6 +236,10 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 		c.ResponseError(errors.New("数据格式有误！"))
 		return
 	}
+
+	// Space 过滤（可选参数）
+	filterSpaceID := c.Query("space_id")
+	hasSpaceFilter := c.Request.URL.Query().Has("space_id")
 
 	version := req.Version
 	loginUID := c.GetLoginUID()
@@ -578,6 +583,17 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 			})
 		}
 	}
+	// Space 过滤
+	if hasSpaceFilter {
+		filtered := make([]*SyncUserConversationResp, 0, len(syncUserConversationResps))
+		for _, conv := range syncUserConversationResps {
+			if conv.SpaceID == filterSpaceID {
+				filtered = append(filtered, conv)
+			}
+		}
+		syncUserConversationResps = filtered
+	}
+
 	c.Response(SyncUserConversationRespWrap{
 		Conversations: syncUserConversationResps,
 		UID:           loginUID,
@@ -1081,6 +1097,7 @@ func (u userResp) from(user *user.Detail, avatarPath string) userResp {
 type SyncUserConversationResp struct {
 	ChannelID       string                 `json:"channel_id"`         // 频道ID
 	ChannelType     uint8                  `json:"channel_type"`       // 频道类型
+	SpaceID         string                 `json:"space_id,omitempty"` // Space ID
 	Unread          int                    `json:"unread,omitempty"`   // 未读消息
 	Mute            int                    `json:"mute,omitempty"`     // 免打扰
 	Stick           int                    `json:"stick,omitempty"`    //  置顶
@@ -1167,9 +1184,11 @@ func newSyncUserConversationResp(resp *config.SyncUserConversationResp, extra *c
 		lastClientMsgNo = resp.LastClientMsgNo
 	}
 
+	spaceID, _ := spacepkg.ParseChannelID(resp.ChannelID)
 	return &SyncUserConversationResp{
 		ChannelID:       resp.ChannelID,
 		ChannelType:     resp.ChannelType,
+		SpaceID:         spaceID,
 		Unread:          resp.Unread,
 		Timestamp:       resp.Timestamp,
 		LastMsgSeq:      resp.LastMsgSeq,

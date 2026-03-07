@@ -518,6 +518,7 @@ type Model struct {
 	AllowViewHistoryMsg      int    // 是否允许新成员查看历史消息
 	AllowMemberPinnedMessage int    // 是否允许群成员置顶消息
 	Category                 string // 群分类
+	SpaceID                  string // Space ID
 	db.BaseModel
 }
 
