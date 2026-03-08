@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/db"
@@ -123,20 +124,23 @@ func (r *remindersDB) insertDonesTx(ids []int64, uid string, tx *dbr.Tx) error {
 
 // 批量插入方法，减少锁持有时间
 func (r *remindersDB) batchInsertDonesTx(sortedIds []int64, uid string, tx *dbr.Tx) error {
-	// 构建批量插入SQL
-	valueStrings := make([]string, 0, len(sortedIds))
+	if len(sortedIds) == 0 {
+		return nil
+	}
+
+	// 使用 strings.Builder 一次性构建 SQL 占位符，避免循环中的字符串拼接
+	var placeholders strings.Builder
 	valueArgs := make([]any, 0, len(sortedIds)*2)
 
-	for _, id := range sortedIds {
-		valueStrings = append(valueStrings, "(?,?)")
+	for i, id := range sortedIds {
+		if i > 0 {
+			placeholders.WriteString(",")
+		}
+		placeholders.WriteString("(?,?)")
 		valueArgs = append(valueArgs, id, uid)
 	}
 
-	sql := fmt.Sprintf("insert ignore into reminder_done(reminder_id,uid) values %s", valueStrings[0])
-	for i := 1; i < len(valueStrings); i++ {
-		sql += "," + valueStrings[i]
-	}
-
+	sql := "INSERT IGNORE INTO reminder_done(reminder_id,uid) VALUES " + placeholders.String()
 	_, err := tx.InsertBySql(sql, valueArgs...).Exec()
 	if err != nil {
 		r.ctx.Error("batchInsertDonesTx failed", zap.Error(err), zap.String("uid", uid), zap.Int("count", len(sortedIds)))
