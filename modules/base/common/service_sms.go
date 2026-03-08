@@ -134,8 +134,13 @@ func (s *SMSService) Verify(ctx context.Context, zone, phone, code string, codeT
 	if err != nil {
 		return err
 	}
-	if sysCode != "" && subtle.ConstantTimeCompare([]byte(sysCode), []byte(code)) == 1 {
+	// Delete the code immediately after reading to minimize the TOCTOU window.
+	// This ensures a concurrent request will see an empty key.
+	// NOTE: For a fully atomic solution, dmwork-lib should expose GetDel or Eval.
+	if sysCode != "" {
 		s.ctx.GetRedisConn().Del(cacheKey)
+	}
+	if sysCode != "" && subtle.ConstantTimeCompare([]byte(sysCode), []byte(code)) == 1 {
 		// 验证成功，清除失败计数
 		failCountKey := fmt.Sprintf("sms_verify_fail:%s@%s", zone, phone)
 		s.ctx.GetRedisConn().Del(failCountKey)
