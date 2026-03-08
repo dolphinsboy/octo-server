@@ -16,7 +16,6 @@ import (
 	"github.com/Mininglamp-OSS/octo-server/modules/base/app"
 	"github.com/Mininglamp-OSS/octo-server/modules/base/event"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
-	spaceChannel "github.com/Mininglamp-OSS/octo-server/pkg/space"
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
@@ -124,14 +123,15 @@ func (bf *BotFather) messagesListen(messages []*config.MessageResp) {
 
 		// 检查是否是发给BotFather的DM
 		rawToUID := common.GetToChannelIDWithFakeChannelID(message.ChannelID, message.FromUID)
-		// Space channel_id 格式: s{spaceId}_{uid}，需要提取真实 uid
-		toUID := rawToUID
-		if _, peerID := spaceChannel.ParseChannelID(rawToUID); peerID != "" {
-			toUID = peerID
-		}
-		if toUID != BotFatherUID {
+		// Space channel_id 格式: s{spaceId}_{botfather}
+		// 用 HasSuffix 匹配 "_botfather"，避免 ParseChannelID 下划线歧义
+		isBotFather := rawToUID == BotFatherUID || strings.HasSuffix(rawToUID, "_"+BotFatherUID)
+		if !isBotFather {
 			continue
 		}
+
+		// 提取 Space 前缀（用于后续 extractRealUID）
+		setSpacePrefixFromChannel(message.ChannelID)
 
 		// 解析消息内容
 		payloadValue := gjson.ParseBytes(message.Payload)

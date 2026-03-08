@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	spaceChannel "github.com/Mininglamp-OSS/octo-server/pkg/space"
 	"github.com/Mininglamp-OSS/octo-server/modules/base/app"
 	"github.com/Mininglamp-OSS/octo-server/modules/group"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
@@ -58,10 +57,37 @@ func (h *commandHandler) HandleMessage(fromUID string, content string) {
 	h.handleStatefulInput(fromUID, content)
 }
 
+// spacePrefix 从 message.FromUID 提取 Space 前缀
+// 原理：fromUID 和 toUID 共享同一个 Space 前缀 s{spaceId}_
+// 我们已知 toUID 以 "_botfather" 结尾，fromUID 有同样的前缀
+// 所以通过 channel_id 中 BotFatherUID 的位置反推 prefix
+var currentSpacePrefix string
+
+// setSpacePrefixFromChannel 从 channel_id 提取 Space 前缀
+func setSpacePrefixFromChannel(channelID string) {
+	// channel_id 格式: s{spaceId}_{uid1}@s{spaceId}_{uid2}
+	// 找到 BotFatherUID 在其中的位置来确定前缀
+	suffix := "_" + BotFatherUID
+	idx := strings.Index(channelID, suffix)
+	if idx > 0 {
+		// 前缀可能包含 @ 前的部分
+		part := channelID[:idx+1] // 包含 "_"
+		// 提取纯 Space 前缀 s{spaceId}_
+		atIdx := strings.LastIndex(part, "@")
+		if atIdx >= 0 {
+			currentSpacePrefix = part[atIdx+1:]
+		} else {
+			currentSpacePrefix = part
+		}
+	} else {
+		currentSpacePrefix = ""
+	}
+}
+
 // extractRealUID 从可能带 Space 前缀的 uid 中提取真实 uid
 func extractRealUID(uid string) string {
-	if _, peerID := spaceChannel.ParseChannelID(uid); peerID != "" {
-		return peerID
+	if currentSpacePrefix != "" && strings.HasPrefix(uid, currentSpacePrefix) {
+		return uid[len(currentSpacePrefix):]
 	}
 	return uid
 }
@@ -812,11 +838,9 @@ func (h *commandHandler) createBot(creatorUID, name, username, botToken string) 
 func (h *commandHandler) reply(toUID string, content string) {
 	channelID := toUID
 	fromUID := BotFatherUID
-	// Space 模式：如果 toUID 含 Space 前缀，BotFather 也需要加前缀
-	if _, peerID := spaceChannel.ParseChannelID(toUID); peerID != "" {
-		// toUID = "sminglue_default_someuser", 提取 spaceId
-		spacePrefix := toUID[:len(toUID)-len(peerID)]
-		fromUID = spacePrefix + BotFatherUID
+	// Space 模式：BotFather 也需要加 Space 前缀
+	if currentSpacePrefix != "" {
+		fromUID = currentSpacePrefix + BotFatherUID
 	}
 	h.ctx.SendMessage(&config.MsgSendReq{
 		Header: config.MsgHeader{
