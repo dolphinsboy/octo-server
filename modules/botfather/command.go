@@ -330,9 +330,9 @@ func (h *commandHandler) handleHelp(fromUID string) {
 /deletebot - 删除机器人
 /token - 查看 Token
 /revoke - 重置 Token
-/pending - 查看待处理申请（已弃用）
-/approve - 通过申请（已弃用）
-/reject - 拒绝申请（已弃用）
+/pending - 查看待处理的好友申请
+/approve - 通过好友申请
+/reject - 拒绝好友申请
 /cancel - 取消当前操作
 /help - 显示帮助`)
 }
