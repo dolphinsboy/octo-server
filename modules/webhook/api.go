@@ -513,9 +513,21 @@ func (w *Webhook) pushTo(msgResp msgOfflineNotify, toUids []string) error {
 				"msg":    msgResp,
 			},
 			JobFunc: func(id int64, data interface{}) {
-				dataMap := data.(map[string]interface{})
-				toUser := dataMap["toUser"].(*user.Resp)
-				msgResp := dataMap["msg"].(msgOfflineNotify)
+				dataMap, ok := data.(map[string]interface{})
+				if !ok {
+					w.Error("推送任务数据类型错误", zap.Any("data", data))
+					return
+				}
+				toUser, ok := dataMap["toUser"].(*user.Resp)
+				if !ok || toUser == nil {
+					w.Error("推送任务缺少有效的toUser")
+					return
+				}
+				msgResp, ok := dataMap["msg"].(msgOfflineNotify)
+				if !ok {
+					w.Error("推送任务缺少有效的msg")
+					return
+				}
 				result, err := w.push(toUser, msgResp)
 				if err != nil {
 					w.Debug("推送失败！", zap.String("uid", toUser.UID), zap.String("deviceType", result.deviceType), zap.String("deviceToken", result.deviceToken), zap.Error(err))
