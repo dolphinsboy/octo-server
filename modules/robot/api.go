@@ -71,8 +71,10 @@ func (rb *Robot) Route(r *wkhttp.WKHttp) {
 		auth.POST("/robot/sync", rb.sync)                        // 同步机器人菜单
 		auth.POST("/robot/inline_query", rb.inlineQuery)        // 机器人行内搜索
 		auth.GET("/robot/commands", rb.getCommands)              // 查询机器人命令列表
-		auth.PUT("/robot/:robot_id/description", rb.setDescription) // 设置 Bot 简介
+		auth.PUT("/robot/:robot_id/description", rb.setDescription)     // 设置 Bot 简介
 		auth.PUT("/robot/:robot_id/auto_approve", rb.setAutoApprove) // 设置是否自动通过好友申请
+		auth.GET("/robot/space_bots", rb.spaceBots)                  // Bot 广场 — Space 内所有 Bot
+		auth.GET("/robot/my_bots", rb.myBots)                        // 我的 Bot — 已添加好友的 Bot
 	}
 
 	robotAuth := r.Group("/v1/robots/:robot_id/:app_key", rb.authRobot()) // :robot_id即user的username
@@ -945,4 +947,189 @@ func (rb *Robot) setAutoApprove(c *wkhttp.Context) {
 		return
 	}
 	c.ResponseOK()
+}
+
+// spaceBots Bot 广场 — 获取 Space 内所有 Bot
+func (rb *Robot) spaceBots(c *wkhttp.Context) {
+	loginUID := c.GetLoginUID()
+	spaceID := c.Query("space_id")
+	if spaceID == "" {
+		c.ResponseError(errors.New("space_id 不能为空"))
+		return
+	}
+
+	// 查询 Space 内所有 Bot（space_member + user + robot）
+	type spaceBotRow struct {
+		UID         string `db:"uid"`
+		Name        string `db:"name"`
+		Description string `db:"description"`
+		CreatorUID  string `db:"creator_uid"`
+		BotCommands string `db:"bot_commands"`
+		AutoApprove int    `db:"auto_approve"`
+	}
+	var bots []spaceBotRow
+	_, err := rb.ctx.DB().SelectBySql(`
+		SELECT sm.uid, IFNULL(u.name,'') as name, 
+			IFNULL(r.description,'') as description, 
+			IFNULL(r.creator_uid,'') as creator_uid,
+			IFNULL(r.bot_commands,'') as bot_commands,
+			IFNULL(r.auto_approve,0) as auto_approve
+		FROM space_member sm
+		INNER JOIN user u ON sm.uid = u.uid AND u.robot = 1
+		LEFT JOIN robot r ON r.robot_id = sm.uid AND r.status = 1
+		WHERE sm.space_id = ? AND sm.uid != 'botfather'
+		ORDER BY u.created_at DESC
+	`, spaceID).Load(&bots)
+	if err != nil {
+		rb.Error("查询 Space Bot 列表失败", zap.Error(err))
+		c.ResponseError(errors.New("查询失败"))
+		return
+	}
+
+	// 批量查好友关系
+	botUIDs := make([]string, 0, len(bots))
+	for _, b := range bots {
+		botUIDs = append(botUIDs, b.UID)
+	}
+	friendMap := make(map[string]bool)
+	applyMap := make(map[string]int) // 0=待审批
+	if len(botUIDs) > 0 {
+		// 好友关系
+		type friendRow struct {
+			ToUID string `db:"to_uid"`
+		}
+		var friends []friendRow
+		_, _ = rb.ctx.DB().SelectBySql(
+			"SELECT to_uid FROM friend WHERE uid = ? AND to_uid IN ? AND is_deleted = 0",
+			loginUID, botUIDs,
+		).Load(&friends)
+		for _, f := range friends {
+			friendMap[f.ToUID] = true
+		}
+		// 好友申请状态
+		type applyRow struct {
+			ToUID  string `db:"to_uid"`
+			Status int    `db:"status"`
+		}
+		var applies []applyRow
+		_, _ = rb.ctx.DB().SelectBySql(
+			"SELECT to_uid, status FROM friend_apply WHERE uid = ? AND to_uid IN ?",
+			loginUID, botUIDs,
+		).Load(&applies)
+		for _, a := range applies {
+			applyMap[a.ToUID] = a.Status
+		}
+	}
+
+	// 批量查创建者名称
+	creatorUIDs := make([]string, 0)
+	creatorUIDSet := make(map[string]bool)
+	for _, b := range bots {
+		if b.CreatorUID != "" && !creatorUIDSet[b.CreatorUID] {
+			creatorUIDs = append(creatorUIDs, b.CreatorUID)
+			creatorUIDSet[b.CreatorUID] = true
+		}
+	}
+	creatorNameMap := make(map[string]string)
+	if len(creatorUIDs) > 0 {
+		type nameRow struct {
+			UID  string `db:"uid"`
+			Name string `db:"name"`
+		}
+		var names []nameRow
+		_, _ = rb.ctx.DB().SelectBySql(
+			"SELECT uid, name FROM user WHERE uid IN ?", creatorUIDs,
+		).Load(&names)
+		for _, n := range names {
+			creatorNameMap[n.UID] = n.Name
+		}
+	}
+
+	results := make([]map[string]interface{}, 0, len(bots))
+	for _, b := range bots {
+		status := "not_added" // 未添加
+		if friendMap[b.UID] {
+			status = "added" // 已添加
+		} else if _, ok := applyMap[b.UID]; ok {
+			status = "pending" // 审批中
+		}
+		results = append(results, map[string]interface{}{
+			"uid":          b.UID,
+			"name":         b.Name,
+			"description":  b.Description,
+			"creator_uid":  b.CreatorUID,
+			"creator_name": creatorNameMap[b.CreatorUID],
+			"bot_commands": b.BotCommands,
+			"auto_approve": b.AutoApprove,
+			"status":       status,
+		})
+	}
+	c.Response(results)
+}
+
+// myBots 我的 Bot — 已添加好友的 Bot
+func (rb *Robot) myBots(c *wkhttp.Context) {
+	loginUID := c.GetLoginUID()
+
+	type myBotRow struct {
+		UID         string `db:"uid"`
+		Name        string `db:"name"`
+		Description string `db:"description"`
+		CreatorUID  string `db:"creator_uid"`
+		BotCommands string `db:"bot_commands"`
+	}
+	var bots []myBotRow
+	_, err := rb.ctx.DB().SelectBySql(`
+		SELECT f.to_uid as uid, IFNULL(u.name,'') as name,
+			IFNULL(r.description,'') as description,
+			IFNULL(r.creator_uid,'') as creator_uid,
+			IFNULL(r.bot_commands,'') as bot_commands
+		FROM friend f
+		INNER JOIN user u ON f.to_uid = u.uid AND u.robot = 1
+		LEFT JOIN robot r ON r.robot_id = f.to_uid AND r.status = 1
+		WHERE f.uid = ? AND f.is_deleted = 0 AND f.to_uid != 'botfather'
+		ORDER BY f.created_at DESC
+	`, loginUID).Load(&bots)
+	if err != nil {
+		rb.Error("查询我的 Bot 列表失败", zap.Error(err))
+		c.ResponseError(errors.New("查询失败"))
+		return
+	}
+
+	// 批量查创建者名称
+	creatorUIDs := make([]string, 0)
+	creatorUIDSet := make(map[string]bool)
+	for _, b := range bots {
+		if b.CreatorUID != "" && !creatorUIDSet[b.CreatorUID] {
+			creatorUIDs = append(creatorUIDs, b.CreatorUID)
+			creatorUIDSet[b.CreatorUID] = true
+		}
+	}
+	creatorNameMap := make(map[string]string)
+	if len(creatorUIDs) > 0 {
+		type nameRow struct {
+			UID  string `db:"uid"`
+			Name string `db:"name"`
+		}
+		var names []nameRow
+		_, _ = rb.ctx.DB().SelectBySql(
+			"SELECT uid, name FROM user WHERE uid IN ?", creatorUIDs,
+		).Load(&names)
+		for _, n := range names {
+			creatorNameMap[n.UID] = n.Name
+		}
+	}
+
+	results := make([]map[string]interface{}, 0, len(bots))
+	for _, b := range bots {
+		results = append(results, map[string]interface{}{
+			"uid":          b.UID,
+			"name":         b.Name,
+			"description":  b.Description,
+			"creator_uid":  b.CreatorUID,
+			"creator_name": creatorNameMap[b.CreatorUID],
+			"bot_commands": b.BotCommands,
+		})
+	}
+	c.Response(results)
 }
