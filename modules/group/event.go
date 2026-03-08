@@ -78,10 +78,10 @@ func (g *Group) handleRegisterUserEvent(data []byte, commit config.EventCommit) 
 		commit(err)
 		return
 	}
-	uid := req["uid"].(string)
-	if uid == "" {
-		g.Error("处理用户注册加入群聊UID不能为空")
-		commit(errors.New("处理用户注册加入群聊UID不能为空"))
+	uid, ok := req["uid"].(string)
+	if !ok || uid == "" {
+		g.Error("处理用户注册加入群聊UID类型错误或为空")
+		commit(errors.New("处理用户注册加入群聊UID类型错误或为空"))
 		return
 	}
 	//查询群聊是否存在
@@ -98,10 +98,17 @@ func (g *Group) handleRegisterUserEvent(data []byte, commit config.EventCommit) 
 		return
 	}
 	defer func() {
-		if err := recover(); err != nil {
+		if r := recover(); r != nil {
 			tx.RollbackUnlessCommitted()
-			commit(err.(error))
-			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", err, debug.Stack())
+			var panicErr error
+			switch x := r.(type) {
+			case error:
+				panicErr = x
+			default:
+				panicErr = fmt.Errorf("panic: %v", r)
+			}
+			commit(panicErr)
+			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", r, debug.Stack())
 		}
 	}()
 	if groupModel == nil {
@@ -220,10 +227,17 @@ func (g *Group) handleOrgOrDeptCreateEvent(data []byte, commit config.EventCommi
 		return
 	}
 	defer func() {
-		if err := recover(); err != nil {
+		if r := recover(); r != nil {
 			tx.RollbackUnlessCommitted()
-			commit(err.(error))
-			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", err, debug.Stack())
+			var panicErr error
+			switch x := r.(type) {
+			case error:
+				panicErr = x
+			default:
+				panicErr = fmt.Errorf("panic: %v", r)
+			}
+			commit(panicErr)
+			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", r, debug.Stack())
 		}
 	}()
 	if groupModel == nil {
@@ -418,10 +432,17 @@ func (g *Group) handleOrgOrDeptEmployeeUpdate(data []byte, commit config.EventCo
 		return
 	}
 	defer func() {
-		if err := recover(); err != nil {
+		if r := recover(); r != nil {
 			tx.RollbackUnlessCommitted()
-			commit(err.(error))
-			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", err, debug.Stack())
+			var panicErr error
+			switch x := r.(type) {
+			case error:
+				panicErr = x
+			default:
+				panicErr = fmt.Errorf("panic: %v", r)
+			}
+			commit(panicErr)
+			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", r, debug.Stack())
 		}
 	}()
 
@@ -701,10 +722,17 @@ func (g *Group) handleOrgEmployeeExit(data []byte, commit config.EventCommit) {
 		return
 	}
 	defer func() {
-		if err := recover(); err != nil {
+		if r := recover(); r != nil {
 			tx.RollbackUnlessCommitted()
-			commit(err.(error))
-			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", err, debug.Stack())
+			var panicErr error
+			switch x := r.(type) {
+			case error:
+				panicErr = x
+			default:
+				panicErr = fmt.Errorf("panic: %v", r)
+			}
+			commit(panicErr)
+			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", r, debug.Stack())
 		}
 	}()
 	for _, groupNo := range realGroups {
