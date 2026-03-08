@@ -879,8 +879,16 @@ func (u *User) wxLogin(c *wkhttp.Context) {
 		c.ResponseErrorf("解码微信access_token返回数据失败！", err)
 		return
 	}
-	var accessToken = bodyMap["access_token"].(string)
-	var openid = bodyMap["openid"].(string)
+	accessToken, ok := bodyMap["access_token"].(string)
+	if !ok {
+		c.ResponseError(errors.New("微信返回数据格式错误：缺少access_token"))
+		return
+	}
+	openid, ok := bodyMap["openid"].(string)
+	if !ok {
+		c.ResponseError(errors.New("微信返回数据格式错误：缺少openid"))
+		return
+	}
 	wxUserInfoResp, err := network.Get("https://api.weixin.qq.com/sns/userinfo", map[string]string{
 		"access_token": accessToken,
 		"openid":       openid,
@@ -902,10 +910,13 @@ func (u *User) wxLogin(c *wkhttp.Context) {
 		return
 	}
 
-	var unionid = wxUserInfoBodyMap["unionid"].(string)
-	var nickname = wxUserInfoBodyMap["nickname"].(string)
-	sex, _ := wxUserInfoBodyMap["sex"].(json.Number).Int64()
-	var headimgurl = wxUserInfoBodyMap["headimgurl"].(string)
+	unionid, _ := wxUserInfoBodyMap["unionid"].(string)
+	nickname, _ := wxUserInfoBodyMap["nickname"].(string)
+	var sex int64
+	if sexNum, ok := wxUserInfoBodyMap["sex"].(json.Number); ok {
+		sex, _ = sexNum.Int64()
+	}
+	headimgurl, _ := wxUserInfoBodyMap["headimgurl"].(string)
 	// 验证该用户是否存在
 	loginSpan := u.ctx.Tracer().StartSpan(
 		"login",
@@ -1539,12 +1550,20 @@ func (u *User) loginWithAuthCode(c *wkhttp.Context) {
 		c.ResponseError(errors.New("解码授权信息失败！"))
 		return
 	}
-	authType := authInfoMap["type"].(string)
+	authType, ok := authInfoMap["type"].(string)
+	if !ok {
+		c.ResponseError(errors.New("授权信息格式错误：缺少type"))
+		return
+	}
 	if authType != string(common.AuthCodeTypeScanLogin) {
 		c.ResponseError(errors.New("授权码不是登录授权码！"))
 		return
 	}
-	scaner := authInfoMap["scaner"].(string)
+	scaner, ok := authInfoMap["scaner"].(string)
+	if !ok {
+		c.ResponseError(errors.New("授权信息格式错误：缺少scaner"))
+		return
+	}
 	// 获取老的token
 	token, err := u.ctx.Cache().Get(fmt.Sprintf("%s%d%s", u.ctx.GetConfig().Cache.UIDTokenCachePrefix, flag, scaner))
 	if err != nil {
@@ -1563,7 +1582,7 @@ func (u *User) loginWithAuthCode(c *wkhttp.Context) {
 		return
 	}
 	// 获取缓存设备
-	uuid := authInfoMap["uuid"].(string)
+	uuid, _ := authInfoMap["uuid"].(string)
 	if uuid != "" {
 		deviceCache, err := u.ctx.GetRedisConn().GetString(fmt.Sprintf("%s%s", common.DeviceCacheUUIDPrefix, uuid))
 		if err != nil {
@@ -1579,9 +1598,9 @@ func (u *User) loginWithAuthCode(c *wkhttp.Context) {
 				c.ResponseError(errors.New("解码设备信息失败！"))
 				return
 			}
-			deviceId := deviceInfoMap["device_id"].(string)
-			deviceName := deviceInfoMap["device_name"].(string)
-			dmodel := deviceInfoMap["device_model"].(string)
+			deviceId, _ := deviceInfoMap["device_id"].(string)
+			deviceName, _ := deviceInfoMap["device_name"].(string)
+			dmodel, _ := deviceInfoMap["device_model"].(string)
 			if deviceId != "" && deviceName != "" && dmodel != "" {
 				span := u.ctx.Tracer().StartSpan(
 					"user.authCodeLogin",
@@ -1713,17 +1732,25 @@ func (u *User) grantLogin(c *wkhttp.Context) {
 		c.ResponseError(errors.New("解码授权信息失败！"))
 		return
 	}
-	authType := authInfoMap["type"].(string)
+	authType, ok := authInfoMap["type"].(string)
+	if !ok {
+		c.ResponseError(errors.New("授权信息格式错误：缺少type"))
+		return
+	}
 	if authType != string(common.AuthCodeTypeScanLogin) {
 		c.ResponseError(errors.New("授权码不是登录授权码！"))
 		return
 	}
-	scaner := authInfoMap["scaner"].(string)
+	scaner, ok := authInfoMap["scaner"].(string)
+	if !ok {
+		c.ResponseError(errors.New("授权信息格式错误：缺少scaner"))
+		return
+	}
 	if scaner != loginUID {
 		c.ResponseError(errors.New("扫描者与授权者不是同一个用户！"))
 		return
 	}
-	uuid := authInfoMap["uuid"].(string)
+	uuid, _ := authInfoMap["uuid"].(string)
 	qrcodeInfo := common.NewQRCodeModel(common.QRCodeTypeScanLogin, map[string]interface{}{
 		"app_id":    "wukongchat",
 		"status":    common.ScanLoginStatusAuthed,
