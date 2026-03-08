@@ -107,24 +107,33 @@ Install the pre-built adapter as an OpenClaw extension for instant message deliv
 openclaw plugins install openclaw-channel-dmwork
 `+"```"+`
 
-Configure in `+"`"+`~/.openclaw/config.yaml`+"`"+`:
+Configure in `+"`"+`~/.openclaw/openclaw.json`+"`"+`:
 
-`+"```"+`yaml
-# Single bot (default)
-channels:
-  dmwork:
-    botToken: "YOUR_BOT_TOKEN"
-    apiUrl: "%s"
+`+"```"+`json
+{
+  "channels": {
+    "dmwork": {
+      "botToken": "YOUR_BOT_TOKEN",
+      "apiUrl": "%s"
+    }
+  }
+}
+`+"```"+`
 
-# Multiple bots on one Gateway (multi-account)
-channels:
-  dmwork:
-    apiUrl: "%s"
-    accounts:
-      bot-a:
-        botToken: "TOKEN_A"
-      bot-b:
-        botToken: "TOKEN_B"
+Multiple bots on one Gateway (multi-account):
+
+`+"```"+`json
+{
+  "channels": {
+    "dmwork": {
+      "apiUrl": "%s",
+      "accounts": {
+        "bot-a": { "botToken": "TOKEN_A" },
+        "bot-b": { "botToken": "TOKEN_B" }
+      }
+    }
+  }
+}
 `+"```"+`
 
 ### Multi-Agent Setup Guide
@@ -133,23 +142,31 @@ When one owner creates multiple bots (e.g. via BotFather /newbot), each bot can 
 
 Example: an owner creates bot-translator, bot-coder, and bot-assistant — each backed by a different OpenClaw agent configuration.
 
-`+"```"+`yaml
-channels:
-  dmwork:
-    apiUrl: "%s"
-    accounts:
-      bot-translator:
-        botToken: "TOKEN_TRANSLATOR"
-        agentModel: "claude-sonnet-4-6"
-        systemPrompt: "You are a professional translator."
-      bot-coder:
-        botToken: "TOKEN_CODER"
-        agentModel: "claude-sonnet-4-6"
-        systemPrompt: "You are a code review assistant."
-      bot-assistant:
-        botToken: "TOKEN_ASSISTANT"
-        agentModel: "claude-sonnet-4-6"
-        systemPrompt: "You are a general-purpose assistant."
+`+"```"+`json
+{
+  "channels": {
+    "dmwork": {
+      "apiUrl": "%s",
+      "accounts": {
+        "bot-translator": {
+          "botToken": "TOKEN_TRANSLATOR",
+          "agentModel": "claude-sonnet-4-6",
+          "systemPrompt": "You are a professional translator."
+        },
+        "bot-coder": {
+          "botToken": "TOKEN_CODER",
+          "agentModel": "claude-sonnet-4-6",
+          "systemPrompt": "You are a code review assistant."
+        },
+        "bot-assistant": {
+          "botToken": "TOKEN_ASSISTANT",
+          "agentModel": "claude-sonnet-4-6",
+          "systemPrompt": "You are a general-purpose assistant."
+        }
+      }
+    }
+  }
+}
 `+"```"+`
 
 v0.2.30+ supports full multi-bot isolation: each bot maintains an independent WebSocket connection with no message cross-processing between bots.
@@ -166,21 +183,9 @@ By default, dmScope is "main" — all DMs share one session regardless of which 
 }
 `+"```"+`
 
-Or in YAML:
-
-`+"```"+`yaml
-session:
-  dmScope: per-account-channel-peer
-`+"```"+`
-
 This makes the session key: `+"`"+`agent:{agentId}:{channel}:{accountId}:direct:{peerId}`+"`"+`, ensuring each bot gets isolated conversation context.
 
-The gateway auto-detects config changes and reloads the plugin.
-If the gateway was started before plugin install, restart it after your current conversation ends.
-
-`+"```"+`bash
-openclaw gateway restart
-`+"```"+`
+The gateway auto-detects config changes and reloads the plugin — no manual restart needed.
 
 Features:
 - Instant message delivery via WuKongIM WebSocket (`+"`"+`%s`+"`"+`)
@@ -270,6 +275,8 @@ DM and group events have different formats. Getting this wrong means replying to
 `+"```"+`
 
 **Reply target:** use `+"`"+`from_uid`+"`"+` as `+"`"+`channel_id`+"`"+`, set `+"`"+`channel_type = 1`+"`"+`.
+
+**Note (Space mode):** In Space-enabled deployments, the underlying WuKongIM channel_id uses `+"`"+`s{spaceId}_{uid}`+"`"+` format. If you use the OpenClaw adapter, this is handled automatically. If you use the events API directly, `+"`"+`from_uid`+"`"+` remains the bare UID — use it as-is for sendMessage.
 
 ### Group Event (channel_id and channel_type are PRESENT)
 
@@ -521,7 +528,7 @@ Response:
 | Scenario | Action |
 |----------|--------|
 | API returns non-200 | Retry after 3-5s, max 3 retries |
-| Register fails (401) | Check bot_token is valid and starts with `+"`"+`bf_`+"`"+` |
+| Register fails (401) | Check bot_token is valid |
 | Heartbeat fails | Retry with exponential backoff |
 | Stream send fails mid-stream | Call stream/end, retry as normal message |
 
