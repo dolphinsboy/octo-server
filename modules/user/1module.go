@@ -3,13 +3,13 @@ package user
 import (
 	"embed"
 	"fmt"
+	"strings"
 
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/model"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/register"
 	"github.com/Mininglamp-OSS/octo-server/modules/space"
-	spaceChannel "github.com/Mininglamp-OSS/octo-server/pkg/space"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -108,10 +108,13 @@ func init() {
 					return register.IMDatasourceTypeNone
 				},
 				Whitelist: func(channelID string, channelType uint8) ([]string, error) {
-					// Space channel_id 格式: s{spaceId}_{uid}，需要提取真实 uid
+					// Space channel_id 格式: s{spaceId}_{uid}，提取真实 uid
+					// 用 LastIndex("_") 避免 spaceId 含下划线时 ParseChannelID 解析错误
 					realUID := channelID
-					if _, peerID := spaceChannel.ParseChannelID(channelID); peerID != "" {
-						realUID = peerID
+					if strings.HasPrefix(channelID, "s") {
+						if idx := strings.LastIndex(channelID, "_"); idx >= 0 {
+							realUID = channelID[idx+1:]
+						}
 					}
 					friends, err := api.userService.GetFriends(realUID)
 					if err != nil {
