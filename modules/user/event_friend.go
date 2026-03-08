@@ -112,19 +112,19 @@ func (f *Friend) handleUserRegister(data []byte, commit config.EventCommit) {
 		return
 	}
 
-	inviteVercode := req["invite_vercode"].(string)
-	if inviteVercode == "" {
+	inviteVercode, ok := req["invite_vercode"].(string)
+	if !ok || inviteVercode == "" {
 		commit(nil)
 		return
 	}
-	uid := req["uid"].(string)
-	if uid == "" {
+	uid, ok := req["uid"].(string)
+	if !ok || uid == "" {
 		f.Error("好友处理用户注册uid不能为空")
 		commit(errors.New("好友处理用户注册uid不能为空"))
 		return
 	}
-	inviteUid := req["invite_uid"].(string)
-	if inviteUid == "" {
+	inviteUid, ok := req["invite_uid"].(string)
+	if !ok || inviteUid == "" {
 		f.Error("好友处理用户注册邀请者uid不能为空")
 		commit(errors.New("好友处理用户注册邀请者uid不能为空"))
 		return
