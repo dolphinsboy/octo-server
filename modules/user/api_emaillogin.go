@@ -137,7 +137,7 @@ func (u *User) emailRegister(c *wkhttp.Context) {
 			tx.Rollback()
 			u.Error("数据库事务提交失败", zap.Error(err))
 			c.ResponseError(errors.New("数据库事务提交失败"))
-			return nil
+			return err
 		}
 		return nil
 	})

@@ -2895,7 +2895,9 @@ func (u *User) createUserWithRespAndTx(registerSpanCtx context.Context, createUs
 	}
 
 	if commitCallback != nil {
-		commitCallback()
+		if err := commitCallback(); err != nil {
+			return nil, err
+		}
 	}
 	u.ctx.EventCommit(eventID)
 	token := util.GenerUUID()
