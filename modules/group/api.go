@@ -3024,7 +3024,6 @@ func (g *Group) setGroupBlacklist(groupNo string, uids []string, isAdd bool) err
 				ChannelType: common.ChannelTypeGroup.Uint8(),
 			}, UIDs: uids})
 	} else {
-		println("移除黑名单--->")
 		err = g.ctx.IMBlacklistRemove(config.ChannelBlacklistReq{
 			ChannelReq: config.ChannelReq{
 				ChannelID:   groupNo,

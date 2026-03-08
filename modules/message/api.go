@@ -759,7 +759,6 @@ func (m *Message) search(c *wkhttp.Context) {
 	}
 	uid := c.MustGet("uid").(string)
 	req.UID = uid
-	fmt.Println("req->", req)
 	resp, err := network.Post(fmt.Sprintf("%s/message/search", m.ctx.GetConfig().WuKongIM.APIURL), []byte(util.ToJson(req)), nil)
 	if err != nil {
 		m.Error("调用搜索失败！", zap.Error(err))
