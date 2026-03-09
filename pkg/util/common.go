@@ -3,6 +3,7 @@ package util
 import (
 	"fmt"
 	"sort"
+	"strconv"
 )
 
 // CheckErr CheckErr
@@ -77,10 +78,10 @@ func objToStr(v interface{}) string {
 		strV = fmt.Sprintf("%s", v)
 		break
 	case float32:
-		strV = fmt.Sprintf("%s", v)
+		strV = strconv.FormatFloat(float64(v.(float32)), 'f', -1, 32)
 		break
 	case float64:
-		strV = fmt.Sprintf("%s", v)
+		strV = strconv.FormatFloat(v.(float64), 'f', -1, 64)
 		break
 	default:
 		strV = fmt.Sprintf("%s", v)
