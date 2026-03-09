@@ -10,11 +10,12 @@ import (
 
 	"crypto/md5"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type SmsbaoProvider struct {
@@ -68,9 +69,7 @@ func (u *SmsbaoProvider) SendSMS(ctx context.Context, zone, phone string, code s
 	passMd5 := hex.EncodeToString(hash.Sum(nil))
 
 	content := strings.Replace(tpl, "{code}", code, -1) // "您好！您的验证码是: " + code + " 。五分钟内有效。注意验证码打死也不要告诉别人哦！"
-	//phone := "13714715608" // 要发送短信的手机号码
-	fmt.Printf("Template: %s\n", tpl)
-	fmt.Printf("Content: %s\n", content)
+
 	// 构建请求URL
 	params := url.Values{}
 	params.Set("u", user)
@@ -84,7 +83,7 @@ func (u *SmsbaoProvider) SendSMS(ctx context.Context, zone, phone string, code s
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(sendurl)
 	if err != nil {
-		fmt.Println("HTTP请求失败:", err)
+		u.Error("HTTP请求失败", zap.Error(err))
 		return err
 	}
 	defer resp.Body.Close()
@@ -92,18 +91,18 @@ func (u *SmsbaoProvider) SendSMS(ctx context.Context, zone, phone string, code s
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println("读取响应失败:", err)
+		u.Error("读取响应失败", zap.Error(err))
 		return err
 	}
 
 	result := string(body)
-	fmt.Println("响应代码:", result)
-	u.Error("短信发送结果:" + result)
 	// 显示对应的状态信息
 	if msg, ok := statusStr[result]; ok {
-		fmt.Println("状态信息:", msg)
+		if result != "0" {
+			u.Error("短信发送失败", zap.String("code", result), zap.String("message", msg))
+		}
 	} else {
-		fmt.Println("未知状态码:", result)
+		u.Error("短信发送未知状态", zap.String("code", result))
 	}
 	return nil
 }

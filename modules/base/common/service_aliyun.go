@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Mininglamp-OSS/octo-lib/config"
-	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
-	"github.com/Mininglamp-OSS/octo-lib/pkg/util"
 	openapi "github.com/alibabacloud-go/darabonba-openapi/client"
 	sms_intl20180501 "github.com/alibabacloud-go/sms-intl-20180501/client"
 	"github.com/alibabacloud-go/tea/tea"
 	"github.com/aliyun/alibaba-cloud-sdk-go/services/dysmsapi"
+	"github.com/Mininglamp-OSS/octo-lib/config"
+	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
+	"github.com/Mininglamp-OSS/octo-lib/pkg/util"
 	"github.com/opentracing/opentracing-go/ext"
 )
 
@@ -30,7 +30,6 @@ func NewAliyunProvider(ctx *config.Context) ISMSProvider {
 }
 
 func (a *AliyunProvider) SendSMS(ctx context.Context, zone, phone string, code string) error {
-	fmt.Println("AliyunProvider......")
 	span, _ := a.ctx.Tracer().StartSpanFromContext(ctx, "smsService.SendVerifyCode")
 	defer span.Finish()
 	client, err := dysmsapi.NewClientWithAccessKey("cn-hangzhou", a.ctx.GetConfig().AliyunSMS.AccessKeyID, a.ctx.GetConfig().AliyunSMS.AccessSecret)
@@ -51,7 +50,6 @@ func (a *AliyunProvider) SendSMS(ctx context.Context, zone, phone string, code s
 		return err
 	}
 	if response.Code == "OK" {
-		fmt.Println("AliyunProvider......ok...")
 		return nil
 	}
 	return errors.New(response.Message)
