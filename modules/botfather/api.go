@@ -871,6 +871,8 @@ func (bf *BotFather) botProxyFile(c *wkhttp.Context) {
 		return
 	}
 	ph = strings.TrimPrefix(ph, "/")
+	// Strip file storage prefix to avoid double "file/" in redirect URL
+	ph = strings.TrimPrefix(ph, "file/")
 
 	filename := c.Query("filename")
 	if filename == "" {
