@@ -1,7 +1,9 @@
 package webhook
 
 import (
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/stretchr/testify/assert"
@@ -67,4 +69,91 @@ func TestFirebasePush(t *testing.T) {
 	// 这个device token是 firebase的token 不是app的device token，请前端老师帮忙提供即可。
 	err := mi.Push("请前端开发给你提供这个值", NewFIREBASEPayload(payloadInfo, "11"))
 	assert.NoError(t, err)
+}
+
+func TestParseHMSAuthResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		resultMap   map[string]interface{}
+		wantToken   string
+		wantExpire  time.Duration
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "nil response",
+			resultMap:   nil,
+			wantErr:     true,
+			errContains: "empty response",
+		},
+		{
+			name:        "missing access_token",
+			resultMap:   map[string]interface{}{},
+			wantErr:     true,
+			errContains: "unexpected access_token type",
+		},
+		{
+			name: "access_token wrong type (int)",
+			resultMap: map[string]interface{}{
+				"access_token": 12345,
+			},
+			wantErr:     true,
+			errContains: "unexpected access_token type",
+		},
+		{
+			name: "valid response with expires_in",
+			resultMap: map[string]interface{}{
+				"access_token": "test_token_abc",
+				"expires_in":   json.Number("7200"),
+			},
+			wantToken:  "test_token_abc",
+			wantExpire: 7200 * time.Second,
+			wantErr:    false,
+		},
+		{
+			name: "valid response without expires_in (default 1h)",
+			resultMap: map[string]interface{}{
+				"access_token": "test_token_xyz",
+			},
+			wantToken:  "test_token_xyz",
+			wantExpire: 3600 * time.Second,
+			wantErr:    false,
+		},
+		{
+			name: "expires_in wrong type (string) falls back to default",
+			resultMap: map[string]interface{}{
+				"access_token": "test_token_fallback",
+				"expires_in":   "not_a_number",
+			},
+			wantToken:  "test_token_fallback",
+			wantExpire: 3600 * time.Second,
+			wantErr:    false,
+		},
+		{
+			name: "expires_in zero falls back to default",
+			resultMap: map[string]interface{}{
+				"access_token": "test_token_zero",
+				"expires_in":   json.Number("0"),
+			},
+			wantToken:  "test_token_zero",
+			wantExpire: 3600 * time.Second,
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, expire, err := parseHMSAuthResponse(tt.resultMap)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantToken, token)
+				assert.Equal(t, tt.wantExpire, expire)
+			}
+		})
+	}
 }

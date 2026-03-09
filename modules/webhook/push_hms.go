@@ -141,6 +141,24 @@ func (h *HMSPush) Push(deviceToken string, payload Payload) error {
 	return nil
 }
 
+// parseHMSAuthResponse 解析华为认证响应，返回 accessToken 和过期时间
+func parseHMSAuthResponse(resultMap map[string]interface{}) (string, time.Duration, error) {
+	if resultMap == nil {
+		return "", 0, errors.New("HMS auth: empty response")
+	}
+	accessToken, ok := resultMap["access_token"].(string)
+	if !ok {
+		return "", 0, fmt.Errorf("HMS auth: unexpected access_token type %T", resultMap["access_token"])
+	}
+	var expiresIn int64 = 3600 // default 1 hour
+	if expiresInVal, ok := resultMap["expires_in"].(json.Number); ok {
+		if parsed, err := expiresInVal.Int64(); err == nil && parsed > 0 {
+			expiresIn = parsed
+		}
+	}
+	return accessToken, time.Duration(expiresIn) * time.Second, nil
+}
+
 // GetHMSAccessToken 获取华为的访问Token
 func (h *HMSPush) GetHMSAccessToken() (string, time.Duration, error) {
 
@@ -152,14 +170,6 @@ func (h *HMSPush) GetHMSAccessToken() (string, time.Duration, error) {
 	if err != nil {
 		return "", 0, err
 	}
-	if resultMap != nil {
-		accessToken := resultMap["access_token"].(string)
-		expiresIn, _ := resultMap["expires_in"].(json.Number).Int64()
-		if expiresIn <= 0 {
-			expiresIn = 3600
-		}
-		return accessToken, time.Duration(expiresIn) * time.Second, nil
-	}
-	return "", 0, nil
+	return parseHMSAuthResponse(resultMap)
 
 }
