@@ -93,8 +93,16 @@ func (bf *BotFather) Route(r *wkhttp.WKHttp) {
 		botAPI.GET("/groups/:group_no", bf.getGroupInfo)
 		botAPI.GET("/groups/:group_no/members", bf.getGroupMembers)
 		botAPI.POST("/setCommands", bf.setCommands)
-		botAPI.GET("/file/*path", bf.botProxyFile)
-		botAPI.POST("/upload", bf.botUploadFile)
+	}
+
+	// Bot File API（独立路由组，避免 GIN wildcard 冲突）
+	botFileAPI := r.Group("/v1/bot/file", bf.authBot())
+	{
+		botFileAPI.GET("/*path", bf.botProxyFile)
+	}
+	botUploadAPI := r.Group("/v1/bot/upload", bf.authBot())
+	{
+		botUploadAPI.POST("", bf.botUploadFile)
 	}
 
 	// Robot Apply API 端点（使用用户认证）
