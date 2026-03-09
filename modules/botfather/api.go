@@ -3,7 +3,9 @@ package botfather
 import (
 	"encoding/json"
 	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"errors"
 	"fmt"
@@ -94,6 +96,9 @@ func (bf *BotFather) Route(r *wkhttp.WKHttp) {
 		botAPI.GET("/groups/:group_no", bf.getGroupInfo)
 		botAPI.GET("/groups/:group_no/members", bf.getGroupMembers)
 		botAPI.POST("/setCommands", bf.setCommands)
+		// Bot File API (#433)
+		botAPI.POST("/file/upload", bf.botUploadFile)
+		botAPI.GET("/file/download/*path", bf.botFileDownload)
 	}
 
 	// Bot File API（独立路由组，避免 GIN wildcard 冲突）
@@ -947,6 +952,61 @@ func (bf *BotFather) botUploadFile(c *wkhttp.Context) {
 		"name": fileName,
 		"size": fileHeader.Size,
 	})
+}
+
+// botFileDownload Bot文件下载 — 302重定向到presigned URL（/v1/bot/file/download/*path）
+func (bf *BotFather) botFileDownload(c *wkhttp.Context) {
+	ph := c.Param("path")
+	if ph == "" {
+		c.ResponseError(errors.New("文件路径不能为空"))
+		return
+	}
+	ph = strings.TrimPrefix(ph, "/")
+
+	// 路径清洗：防止路径遍历攻击（defense-in-depth）
+	ph, err := sanitizeBotFilePath(ph)
+	if err != nil {
+		c.ResponseErrorWithStatus(errors.New("文件路径无效"), http.StatusBadRequest)
+		return
+	}
+
+	filename := c.Query("filename")
+	if filename == "" {
+		parts := strings.Split(ph, "/")
+		if len(parts) > 0 {
+			filename = parts[len(parts)-1]
+		}
+	}
+
+	downloadURL, err := bf.fileService.DownloadURL(ph, filename)
+	if err != nil {
+		bf.Error("获取文件下载URL失败", zap.Error(err), zap.String("path", ph))
+		c.ResponseErrorWithStatus(errors.New("获取文件失败"), http.StatusNotFound)
+		return
+	}
+	c.Redirect(http.StatusFound, downloadURL)
+}
+
+// sanitizeBotFilePath 规范化文件路径，防止路径遍历攻击
+func sanitizeBotFilePath(p string) (string, error) {
+	// 循环解码防止双重/多重 URL 编码绕过
+	decoded := p
+	for i := 0; i < 3; i++ {
+		next, err := url.QueryUnescape(decoded)
+		if err != nil {
+			return "", errors.New("路径包含无效字符")
+		}
+		if next == decoded {
+			break
+		}
+		decoded = next
+	}
+	// 禁止包含 .. 的路径遍历
+	cleaned := filepath.Clean(decoded)
+	if strings.Contains(cleaned, "..") {
+		return "", errors.New("路径不允许包含目录遍历字符")
+	}
+	return cleaned, nil
 }
 
 // ========== 响应模型 ==========
