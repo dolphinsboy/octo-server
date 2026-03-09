@@ -292,6 +292,12 @@ func sanitizePath(p string) (string, error) {
 		}
 		decoded = next
 	}
+	// 过滤空字节及其他控制字符
+	for _, r := range decoded {
+		if r == 0 || r == 0x7F || r < 0x20 {
+			return "", errors.New("path contains invalid control characters")
+		}
+	}
 	// 禁止包含 .. 的路径遍历
 	cleaned := filepath.Clean(decoded)
 	if strings.Contains(cleaned, "..") {
