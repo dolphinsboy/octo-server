@@ -71,6 +71,92 @@ func TestFirebasePush(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestParseOPPOAuthResponse(t *testing.T) {
+	tests := []struct {
+		name        string
+		resp        map[string]interface{}
+		wantToken   string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "nil response",
+			resp:        nil,
+			wantErr:     true,
+			errContains: "empty response",
+		},
+		{
+			name:        "missing code",
+			resp:        map[string]interface{}{},
+			wantErr:     true,
+			errContains: "empty response",
+		},
+		{
+			name: "code wrong type",
+			resp: map[string]interface{}{
+				"code": "not_a_number",
+			},
+			wantErr:     true,
+			errContains: "unexpected code type",
+		},
+		{
+			name: "auth failed with error code",
+			resp: map[string]interface{}{
+				"code":    json.Number("1001"),
+				"message": "invalid credentials",
+			},
+			wantErr:     true,
+			errContains: "auth failed",
+		},
+		{
+			name: "data wrong type",
+			resp: map[string]interface{}{
+				"code": json.Number("0"),
+				"data": "not_a_map",
+			},
+			wantErr:     true,
+			errContains: "unexpected data type",
+		},
+		{
+			name: "auth_token wrong type",
+			resp: map[string]interface{}{
+				"code": json.Number("0"),
+				"data": map[string]interface{}{
+					"auth_token": 12345,
+				},
+			},
+			wantErr:     true,
+			errContains: "unexpected auth_token type",
+		},
+		{
+			name: "valid response",
+			resp: map[string]interface{}{
+				"code": json.Number("0"),
+				"data": map[string]interface{}{
+					"auth_token": "oppo_token_abc123",
+				},
+			},
+			wantToken: "oppo_token_abc123",
+			wantErr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := parseOPPOAuthResponse(tt.resp)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantToken, token)
+			}
+		})
+	}
+}
+
 func TestParseHMSAuthResponse(t *testing.T) {
 	tests := []struct {
 		name        string

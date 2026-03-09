@@ -87,9 +87,14 @@ func (o *OPPOPush) Push(deviceToken string, payload Payload) error {
 		return err
 	}
 	if resp != nil && resp["code"] != nil {
-		code, _ := resp["code"].(json.Number).Int64()
-		if code != 0 {
-			return errors.New(resp["message"].(string))
+		if codeNum, ok := resp["code"].(json.Number); ok {
+			code, _ := codeNum.Int64()
+			if code != 0 {
+				if msg, ok := resp["message"].(string); ok {
+					return errors.New(msg)
+				}
+				return fmt.Errorf("OPPO push failed with code %d", code)
+			}
 		}
 	}
 	return nil
@@ -114,13 +119,18 @@ func (o *OPPOPush) getAuthToken() string {
 	}
 
 	if resp != nil && resp["code"] != nil {
-		code, _ := resp["code"].(json.Number).Int64()
-		message, _ := resp["message"].(string)
-		if code != 0 {
-			o.Error("OPPO鉴权返回错误数据", zap.String("错误信息", message))
-		} else {
-			data, _ := resp["data"].(map[string]interface{})
-			authToken = data["auth_token"].(string)
+		if codeNum, ok := resp["code"].(json.Number); ok {
+			code, _ := codeNum.Int64()
+			message, _ := resp["message"].(string)
+			if code != 0 {
+				o.Error("OPPO鉴权返回错误数据", zap.String("错误信息", message))
+			} else {
+				if data, ok := resp["data"].(map[string]interface{}); ok {
+					if token, ok := data["auth_token"].(string); ok {
+						authToken = token
+					}
+				}
+			}
 		}
 	}
 	if authToken != "" {
@@ -132,7 +142,31 @@ func (o *OPPOPush) getAuthToken() string {
 func (o *OPPOPush) SHA256(password string) string {
 	hash := sha256.New()
 	hash.Write([]byte(password))
-	res := hex.EncodeToString(hash.Sum(nil))
-	fmt.Println(len(res))
-	return res
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// parseOPPOAuthResponse 解析 OPPO 认证响应，返回 authToken
+// 如果响应格式错误或认证失败，返回空字符串和错误信息
+func parseOPPOAuthResponse(resp map[string]interface{}) (string, error) {
+	if resp == nil || resp["code"] == nil {
+		return "", errors.New("OPPO auth: empty response")
+	}
+	codeNum, ok := resp["code"].(json.Number)
+	if !ok {
+		return "", fmt.Errorf("OPPO auth: unexpected code type %T", resp["code"])
+	}
+	code, _ := codeNum.Int64()
+	if code != 0 {
+		message, _ := resp["message"].(string)
+		return "", fmt.Errorf("OPPO auth failed: code=%d, message=%s", code, message)
+	}
+	data, ok := resp["data"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("OPPO auth: unexpected data type %T", resp["data"])
+	}
+	token, ok := data["auth_token"].(string)
+	if !ok {
+		return "", fmt.Errorf("OPPO auth: unexpected auth_token type %T", data["auth_token"])
+	}
+	return token, nil
 }
