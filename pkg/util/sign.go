@@ -32,7 +32,7 @@ func GetSignStr(params map[string]interface{}) string {
 
 func ObjToStr(v interface{}) string {
 	var strV string
-	switch v.(type) {
+	switch v := v.(type) {
 
 	case int:
 		strV = fmt.Sprintf("%d", v)
@@ -61,7 +61,7 @@ func ObjToStr(v interface{}) string {
 	case float64:
 		strV = strconv.FormatFloat(v, 'f', -1, 64)
 	default:
-		strV = fmt.Sprintf("%s", v)
+		strV = fmt.Sprintf("%v", v)
 	}
 	return strV
 }
