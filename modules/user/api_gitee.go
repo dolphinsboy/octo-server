@@ -270,7 +270,11 @@ func (u *User) requestGiteeAccessToken(code string) (string, error) {
 
 	accessToken := ""
 	if result["access_token"] != nil {
-		accessToken = result["access_token"].(string)
+		if token, ok := result["access_token"].(string); ok {
+			accessToken = token
+		} else {
+			return "", errors.New("access_token 类型错误")
+		}
 	}
 
 	return accessToken, nil
