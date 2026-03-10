@@ -83,8 +83,24 @@ func (q *QRCode) handleQRCodeInfo(c *wkhttp.Context) {
 	code := c.Param("code")
 
 	if strings.HasPrefix(code, "user_") { // 用户资料二维码 格式： user_xxxx
+		targetUID := code[len("user_"):]
+		if targetUID == "" {
+			c.ResponseError(errors.New("用户UID不能为空"))
+			return
+		}
+		// Validate target user exists
+		targetUser, err := q.userService.GetUser(targetUID)
+		if err != nil {
+			q.Error("查询目标用户失败", zap.String("targetUID", targetUID), zap.Error(err))
+			c.ResponseError(errors.New("查询用户信息失败"))
+			return
+		}
+		if targetUser == nil {
+			c.ResponseError(errors.New("用户不存在"))
+			return
+		}
 		c.Response(NewHandleResult(ForwardNative, HandlerTypeUserInfo, map[string]interface{}{
-			"uid": code[len("user_"):],
+			"uid": targetUID,
 		}))
 		return
 	}
