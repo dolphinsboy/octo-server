@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/db"
@@ -150,8 +151,20 @@ func (d *DB) QueryUserWithOnlyShortNo(shortNo string) (*Model, error) {
 	return model, err
 }
 
+// allowedUpdateFields is the whitelist of columns that can be updated via UpdateUsersWithField.
+var allowedUpdateFields = map[string]bool{
+	"sex": true, "short_no": true, "name": true, "short_status": true,
+	"search_by_phone": true, "search_by_short": true, "new_msg_notice": true,
+	"msg_show_detail": true, "voice_on": true, "shock_on": true,
+	"msg_expire_second": true, "is_upload_avatar": true,
+	"chat_pwd": true, "lock_after_minute": true, "lock_screen_pwd": true,
+}
+
 // UpdateUsersWithField 修改用户基本资料
 func (d *DB) UpdateUsersWithField(field string, value string, uid string) error {
+	if !allowedUpdateFields[field] {
+		return fmt.Errorf("field %q is not allowed for update", field)
+	}
 	_, err := d.session.Update("user").Set(field, value).Where("uid=?", uid).Exec()
 	return err
 }
