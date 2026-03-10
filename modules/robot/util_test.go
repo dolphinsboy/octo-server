@@ -20,7 +20,8 @@ func TestRandomHexStr(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hex := randomHexStr(tt.n)
+			hex, err := randomHexStr(tt.n)
+			assert.NoError(t, err, "randomHexStr should not return error")
 			assert.Len(t, hex, tt.wantLen, "randomHexStr(%d) should return %d chars", tt.n, tt.wantLen)
 
 			// 验证所有字符是合法的十六进制字符
@@ -37,7 +38,8 @@ func TestRandomHexStr_Uniqueness(t *testing.T) {
 	// 生成多个随机字符串，验证不全相同
 	results := make(map[string]bool)
 	for i := 0; i < 50; i++ {
-		hex := randomHexStr(16)
+		hex, err := randomHexStr(16)
+		assert.NoError(t, err)
 		results[hex] = true
 	}
 	assert.Greater(t, len(results), 1, "should generate different hex strings")

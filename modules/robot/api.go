@@ -48,6 +48,7 @@ type Robot struct {
 	inlineQueryEventResultChanMap     map[string]chan *InlineQueryResult
 	inlineQueryEventResultChanMapLock sync.RWMutex
 	mentionRegexp                     *regexp.Regexp
+	creatorCache                      sync.Map // robotID -> creatorUID 缓存
 }
 
 func New(ctx *config.Context) *Robot {

@@ -226,3 +226,10 @@ func (d *robotDB) queryRobotUIDsInGroup(groupNo string) ([]string, error) {
 	).Load(&uids)
 	return uids, err
 }
+
+// queryCreatorUID 查询机器人的创建者UID
+func (d *robotDB) queryCreatorUID(robotID string) (string, error) {
+	var creatorUID string
+	err := d.session.Select("IFNULL(creator_uid,'')").From("robot").Where("robot_id=? and status=1", robotID).LoadOne(&creatorUID)
+	return creatorUID, err
+}

@@ -13,6 +13,19 @@ import (
 	"go.uber.org/zap"
 )
 
+// getCreatorUID 带缓存地查询机器人的创建者UID
+func (rb *Robot) getCreatorUID(robotID string) (string, error) {
+	if v, ok := rb.creatorCache.Load(robotID); ok {
+		return v.(string), nil
+	}
+	uid, err := rb.db.queryCreatorUID(robotID)
+	if err != nil {
+		return "", err
+	}
+	rb.creatorCache.Store(robotID, uid)
+	return uid, nil
+}
+
 func (rb *Robot) existRobot(robotID string) (bool, error) {
 	key := fmt.Sprintf("robot:exist:%s", robotID)
 	exist, err := rb.ctx.GetRedisConn().GetString(key)
@@ -65,26 +78,43 @@ func (rb *Robot) robotMessageListen(messages []*config.MessageResp) {
 			if exist {
 				// BotFather 跳过好友关系校验
 				if realUID != "botfather" {
-					isFriend, err := rb.userService.IsFriend(message.FromUID, realUID)
+					// 检查发送者是否为 Bot 创建者（使用缓存减少 DB 查询）
+					creatorUID, err := rb.getCreatorUID(realUID)
 					if err != nil {
-						rb.Error("查询好友关系失败", zap.Error(err), zap.String("fromUID", message.FromUID), zap.String("robotID", realUID))
+						rb.Error("查询Bot创建者失败", zap.Error(err), zap.String("robotID", realUID))
 						continue
 					}
-					if !isFriend {
-						rb.Warn("用户与Bot非好友关系，拒绝转发消息", zap.String("fromUID", message.FromUID), zap.String("robotID", realUID))
-						rb.ctx.SendMessage(&config.MsgSendReq{
-							Header: config.MsgHeader{
-								RedDot: 1,
-							},
-							FromUID:     realUID,
-							ChannelID:   message.FromUID,
-							ChannelType: message.ChannelType,
-							Payload: []byte(util.ToJson(map[string]interface{}{
-								"content": "请先添加好友后再与我对话",
-								"type":    common.Text,
-							})),
-						})
-						continue
+					// 创建者跳过好友关系校验
+					if creatorUID != message.FromUID {
+						isFriend, err := rb.userService.IsFriend(message.FromUID, realUID)
+						if err != nil {
+							rb.Error("查询好友关系失败", zap.Error(err), zap.String("fromUID", message.FromUID), zap.String("robotID", realUID))
+							continue
+						}
+						// Space 场景：好友表可能使用原始 uid 格式(s{spaceId}_{robotID})，需同时检查
+						if !isFriend && uid != realUID {
+							isFriend, err = rb.userService.IsFriend(message.FromUID, uid)
+							if err != nil {
+								rb.Error("查询好友关系失败(Space格式)", zap.Error(err), zap.String("fromUID", message.FromUID), zap.String("uid", uid))
+								continue
+							}
+						}
+						if !isFriend {
+							rb.Warn("用户与Bot非好友关系，拒绝转发消息", zap.String("fromUID", message.FromUID), zap.String("robotID", realUID))
+							rb.ctx.SendMessage(&config.MsgSendReq{
+								Header: config.MsgHeader{
+									RedDot: 1,
+								},
+								FromUID:     realUID,
+								ChannelID:   message.FromUID,
+								ChannelType: message.ChannelType,
+								Payload: []byte(util.ToJson(map[string]interface{}{
+									"content": "请先添加好友后再与我对话",
+									"type":    common.Text,
+								})),
+							})
+							continue
+						}
 					}
 				}
 				robotID = realUID

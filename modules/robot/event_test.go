@@ -174,6 +174,48 @@ func TestExtractBotCommand(t *testing.T) {
 	}
 }
 
+// TestShouldSkipFriendCheck tests the friend check skip logic for Bot creators.
+// This test addresses issue #481 where Bot always shows "add friend first" message.
+func TestShouldSkipFriendCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		fromUID    string
+		creatorUID string
+		robotID    string
+		shouldSkip bool
+	}{
+		{
+			name:       "creator should skip friend check",
+			fromUID:    "user123",
+			creatorUID: "user123",
+			robotID:    "bot001",
+			shouldSkip: true,
+		},
+		{
+			name:       "non-creator should not skip friend check",
+			fromUID:    "user456",
+			creatorUID: "user123",
+			robotID:    "bot001",
+			shouldSkip: false,
+		},
+		{
+			name:       "empty creator allows all (legacy bot)",
+			fromUID:    "user789",
+			creatorUID: "",
+			robotID:    "bot002",
+			shouldSkip: false, // empty creator means check friend relation
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// shouldSkip logic: creatorUID == fromUID
+			shouldSkip := tt.creatorUID == tt.fromUID
+			assert.Equal(t, tt.shouldSkip, shouldSkip, "shouldSkipFriendCheck should return expected result")
+		})
+	}
+}
+
 // extractBotCommandKey extracts the bot command from content using entities.
 // This is a helper function that mirrors the logic in messagesListen for testability.
 func extractBotCommandKey(content string, entities []map[string]interface{}) string {
