@@ -169,15 +169,20 @@ func (bf *BotFather) messagesListen(messages []*config.MessageResp) {
 			continue
 		}
 
+		// 从 payload 提取 space_id（前端注入，用于 DM 裸 UID 场景）
+		spaceID := payloadValue.Get("space_id").String()
+
 		// 处理命令（使用信号量限制并发数）
 		select {
 		case bf.msgSem <- struct{}{}:
-			go func(uid, msg, chID string) {
+			go func(uid, msg, chID, sid string) {
 				defer func() { <-bf.msgSem }()
 				cleanup := setSpacePrefixForUID(uid, chID)
 				defer cleanup()
+				cleanupSID := setSpaceIDFromPayload(uid, sid)
+				defer cleanupSID()
 				bf.cmdHandler.HandleMessage(uid, msg)
-			}(message.FromUID, content, channelID)
+			}(message.FromUID, content, channelID, spaceID)
 		default:
 			bf.Warn("消息处理并发数已达上限，丢弃消息", zap.String("fromUID", message.FromUID))
 		}

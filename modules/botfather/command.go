@@ -63,6 +63,10 @@ func (h *commandHandler) HandleMessage(fromUID string, content string) {
 // up after, ensuring concurrent messages don't interfere with each other.
 var spacePrefixes sync.Map
 
+// spaceIDs stores per-fromUID space_id extracted from message payload.
+// This is the primary source for DM scenarios where channel_id is a bare UID.
+var spaceIDs sync.Map
+
 // setSpacePrefixForUID extracts the Space prefix from channelID and stores it
 // keyed by fromUID. Returns a cleanup function that must be deferred.
 func setSpacePrefixForUID(fromUID, channelID string) func() {
@@ -99,6 +103,33 @@ func extractRealUID(uid string) string {
 		return uid[len(prefix):]
 	}
 	return uid
+}
+
+// setSpaceIDFromPayload stores the space_id from message payload for the given uid.
+// Returns a cleanup function that must be deferred.
+func setSpaceIDFromPayload(uid, spaceID string) func() {
+	if spaceID != "" {
+		spaceIDs.Store(uid, spaceID)
+	}
+	return func() { spaceIDs.Delete(uid) }
+}
+
+// getCurrentSpaceID returns the current Space ID for the given uid.
+// Priority: payload space_id > channel_id Space prefix > empty.
+func getCurrentSpaceID(uid string) string {
+	// Priority 1: from payload space_id
+	if v, ok := spaceIDs.Load(uid); ok {
+		if sid, ok := v.(string); ok && sid != "" {
+			return sid
+		}
+	}
+	// Priority 2: from channel_id Space prefix (legacy)
+	prefix := getSpacePrefix(uid)
+	if prefix != "" && len(prefix) > 2 {
+		// prefix format: "s{spaceId}_", strip leading "s" and trailing "_"
+		return prefix[1 : len(prefix)-1]
+	}
+	return ""
 }
 
 func (h *commandHandler) handleCommand(fromUID string, cmd string) {
@@ -173,12 +204,9 @@ func (h *commandHandler) handleStatefulInput(fromUID string, input string) {
 // queryBotsForUser returns the creator's bots, filtered by current Space if available.
 func (h *commandHandler) queryBotsForUser(fromUID string) ([]*robotModel, error) {
 	realUID := extractRealUID(fromUID)
-	spacePrefix := getSpacePrefix(fromUID)
-	if spacePrefix != "" {
-		spaceID := spacePrefix[1 : len(spacePrefix)-1]
-		if len(spaceID) >= 2 {
-			return h.db.queryRobotsByCreatorUIDAndSpaceID(realUID, spaceID)
-		}
+	spaceID := h.resolveSpaceID(fromUID)
+	if spaceID != "" {
+		return h.db.queryRobotsByCreatorUIDAndSpaceID(realUID, spaceID)
 	}
 	return h.db.queryRobotsByCreatorUID(realUID)
 }
@@ -206,16 +234,7 @@ func (h *commandHandler) handleMyBots(fromUID string) {
 		userStatus = -2 // query failed
 	}
 	// 提取当前 Space ID，用于过滤
-	spacePrefix := getSpacePrefix(fromUID)
-	var currentSpaceID string
-	if spacePrefix != "" {
-		currentSpaceID = spacePrefix[1 : len(spacePrefix)-1]
-		if len(currentSpaceID) < 2 {
-			h.Warn("/mybots Space前缀格式异常", zap.String("spacePrefix", spacePrefix), zap.String("fromUID", fromUID))
-			h.reply(fromUID, "Space 信息异常，请重新进入会话后重试。")
-			return
-		}
-	}
+	currentSpaceID := h.resolveSpaceID(fromUID)
 	h.Info("/mybots query", zap.String("fromUID", fromUID), zap.String("realUID", realUID), zap.Int("creator_user_status", userStatus), zap.String("spaceID", currentSpaceID))
 	var bots []*robotModel
 	var err error
@@ -852,24 +871,15 @@ func (h *commandHandler) createBot(creatorUID, fromUID, name, username, botToken
 	}
 
 	// 4. 将 Bot 加入当前 Space（而非创建者所在的所有 Space）
-	spacePrefix := getSpacePrefix(fromUID)
-	var targetSpaceID string
-	if spacePrefix != "" {
-		// Space 前缀格式为 "s{spaceId}_"，去掉首字符 "s" 和末尾 "_"
-		targetSpaceID = spacePrefix[1 : len(spacePrefix)-1]
-		if len(targetSpaceID) < 2 {
-			h.Warn("createBot Space前缀格式异常", zap.String("spacePrefix", spacePrefix), zap.String("fromUID", fromUID))
-			return fmt.Errorf("Space 信息异常，无法创建机器人")
-		}
-	}
-	if spacePrefix == "" {
-		// 无 Space 前缀（legacy），回退到创建者的第一个 Space
-		spaceIDs, err := h.getCreatorSpaceIDs(creatorUID)
+	targetSpaceID := h.resolveSpaceID(fromUID)
+	if targetSpaceID == "" {
+		// 无 Space 信息（legacy），回退到创建者的第一个 Space
+		creatorSpaces, err := h.getCreatorSpaceIDs(creatorUID)
 		if err != nil {
 			h.Warn("查询创建者Space失败", zap.Error(err))
 		}
-		if len(spaceIDs) > 0 {
-			targetSpaceID = spaceIDs[0]
+		if len(creatorSpaces) > 0 {
+			targetSpaceID = creatorSpaces[0]
 		}
 	}
 	if targetSpaceID != "" {
@@ -1011,6 +1021,25 @@ Simply confirm the steps are complete and stop.
 		name, apiURL, bot.BotToken, apiURL)
 
 	h.reply(toUID, msg)
+}
+
+// resolveSpaceID returns the current Space ID for the user, with DB fallback.
+// Priority: payload space_id > channel prefix > most recently joined Space.
+func (h *commandHandler) resolveSpaceID(fromUID string) string {
+	sid := getCurrentSpaceID(fromUID)
+	if sid != "" {
+		return sid
+	}
+	// DB fallback: query the user's most recently joined Space
+	realUID := extractRealUID(fromUID)
+	var fallbackID string
+	err := h.db.session.SelectBySql(
+		"SELECT space_id FROM space_member WHERE uid=? AND status=1 ORDER BY created_at DESC LIMIT 1", realUID,
+	).LoadOne(&fallbackID)
+	if err != nil {
+		h.Warn("resolveSpaceID DB fallback failed", zap.Error(err), zap.String("uid", realUID))
+	}
+	return fallbackID
 }
 
 // fixFriendVersion 修复好友 version=0 的问题（WKSDK 增量同步需要 version > 0）
