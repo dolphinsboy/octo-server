@@ -3,6 +3,7 @@ package webhook
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
 	"github.com/Mininglamp-OSS/octo-lib/config"
@@ -27,7 +28,8 @@ func NewIOSPayload(payloadInfo *PayloadInfo) Payload {
 
 // IOSPush IOSPush
 type IOSPush struct {
-	client      *apns2.Client
+	client    *apns2.Client
+	clientMu  sync.Mutex
 	topic       string
 	password    string
 	p12FilePath string
@@ -103,13 +105,16 @@ func (p *IOSPush) Push(deviceToken string, payload Payload) error {
 		}))
 	}
 
-	var err error
+	p.clientMu.Lock()
 	if p.client == nil {
-		p.client, err = p.createClient()
+		client, err := p.createClient()
 		if err != nil {
+			p.clientMu.Unlock()
 			return err
 		}
+		p.client = client
 	}
+	p.clientMu.Unlock()
 	res, err := p.client.Push(notification)
 	if err != nil {
 		return err
