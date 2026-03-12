@@ -87,6 +87,8 @@ func (sm *ServiceMinio) UploadFile(filePath string, contentType string, copyFile
 			sm.Error(fmt.Sprintf("创建 %s目录失败", bucketName))
 			return nil, err
 		}
+		// Read-only public policy: allow anonymous download only.
+		// Upload and delete go through authenticated server-side credentials.
 		policy := `{
 			"Version": "2012-10-17",
 			"Statement": [{
@@ -94,18 +96,11 @@ func (sm *ServiceMinio) UploadFile(filePath string, contentType string, copyFile
 				"Principal": {
 					"AWS": ["*"]
 				},
-				"Action": ["s3:GetBucketLocation", "s3:ListBucket", "s3:ListBucketMultipartUploads"],
-				"Resource": ["arn:aws:s3:::%s"]
-			}, {
-				"Effect": "Allow",
-				"Principal": {
-					"AWS": ["*"]
-				},
-				"Action": ["s3:AbortMultipartUpload", "s3:DeleteObject", "s3:GetObject", "s3:ListMultipartUploadParts", "s3:PutObject"],
+				"Action": ["s3:GetObject"],
 				"Resource": ["arn:aws:s3:::%s/*"]
 			}]
 		}`
-		err = minioClient.SetBucketPolicy(context.Background(), bucketName, fmt.Sprintf(policy, bucketName, bucketName))
+		err = minioClient.SetBucketPolicy(context.Background(), bucketName, fmt.Sprintf(policy, bucketName))
 		if err != nil {
 			sm.Error("设置minio文件读写权限错误", zap.Error(err))
 			return nil, err
