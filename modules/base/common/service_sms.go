@@ -169,6 +169,12 @@ func (s *SMSService) Verify(ctx context.Context, zone, phone, code string, codeT
 		s.ctx.GetRedisConn().SetAndExpire(failCountKey, fmt.Sprintf("%d", failCount), time.Minute*10)
 	}
 
-	s.Info("验证码错误:"+code+", phone:"+phone, zap.String("code", code))
+	maskedPhone := phone
+	if len(phone) >= 7 {
+		maskedPhone = phone[:3] + "****" + phone[len(phone)-4:]
+	} else if len(phone) > 2 {
+		maskedPhone = phone[:1] + "****"
+	}
+	s.Info("验证码错误", zap.String("phone", maskedPhone))
 	return errors.New("验证码无效！")
 }
