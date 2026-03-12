@@ -1539,7 +1539,7 @@ func (u *User) loginWithAuthCode(c *wkhttp.Context) {
 	if flagI64 == 0 {
 		flag = config.Web // loginWithAuthCode 默认为web登陆
 	} else {
-		flag = config.DeviceFlag(flag)
+		flag = config.DeviceFlag(flagI64)
 	}
 	authInfo, err := u.ctx.GetRedisConn().GetString(authCodeKey)
 	if err != nil {
