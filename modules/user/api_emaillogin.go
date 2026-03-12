@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"runtime/debug"
 	"strings"
 
 	commonapi "github.com/Mininglamp-OSS/octo-server/modules/base/common"
@@ -120,7 +121,10 @@ func (u *User) emailRegister(c *wkhttp.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			panic(r)
+			u.Error("emailRegister panic recovered",
+				zap.Any("recover", r),
+				zap.String("stack", string(debug.Stack())))
+			c.ResponseError(errors.New("注册失败，请重试"))
 		}
 	}()
 
