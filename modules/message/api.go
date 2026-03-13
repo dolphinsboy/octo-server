@@ -323,9 +323,9 @@ func (m *Message) messageEdit(c *wkhttp.Context) {
 		c.ResponseError(errors.New("开启事务失败！"))
 		return
 	}
+	defer tx.RollbackUnlessCommitted()
 	defer func() {
 		if err := recover(); err != nil {
-			tx.Rollback()
 			fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", err, debug.Stack())
 		}
 	}()
@@ -1434,9 +1434,9 @@ func (m *Message) offset(c *wkhttp.Context) {
 			c.ResponseError(errors.New("开启事务失败！"))
 			return
 		}
+		defer tx.RollbackUnlessCommitted()
 		defer func() {
 			if err := recover(); err != nil {
-				tx.RollbackUnlessCommitted()
 				fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", err, debug.Stack())
 			}
 		}()
@@ -1568,9 +1568,9 @@ func (m *Message) cancelMentionReminderIfNeed(message *messageModel) {
 						m.Error("开启事务失败！", zap.Error(err))
 						return
 					}
+					defer tx.RollbackUnlessCommitted()
 					defer func() {
 						if err := recover(); err != nil {
-							tx.RollbackUnlessCommitted()
 							fmt.Fprintf(os.Stderr, "recovered panic in goroutine: %v\n%s\n", err, debug.Stack())
 						}
 					}()
