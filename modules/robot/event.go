@@ -165,8 +165,7 @@ func (rb *Robot) robotMessageListen(messages []*config.MessageResp) {
 								continue
 							}
 							if exist {
-								robotID = robotUsername
-								break
+								robotIDs = append(robotIDs, robotUsername)
 							}
 						}
 					}
