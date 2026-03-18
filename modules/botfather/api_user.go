@@ -38,6 +38,7 @@ func (bf *BotFather) authUserAPIKey() wkhttp.HandlerFunc {
 		}
 
 		c.Set("api_key_uid", keyModel.UID)
+		c.Set("api_key_space_id", keyModel.SpaceID)
 		c.Next()
 	}
 }
@@ -192,26 +193,36 @@ func (bf *BotFather) createUserBot(c *wkhttp.Context) {
 		return
 	}
 
-	// Add bot to specified Space (best-effort, non-critical)
+	// Resolve Space ID: request > API Key binding
+	spaceID := req.SpaceID
+	if spaceID == "" {
+		if v, ok := c.Get("api_key_space_id"); ok {
+			if s, ok := v.(string); ok {
+				spaceID = s
+			}
+		}
+	}
+
+	// Add bot to Space (best-effort, non-critical)
 	// Verify caller belongs to the Space before adding bot (prevent cross-Space injection)
-	if req.SpaceID != "" {
+	if spaceID != "" {
 		var memberCount int
 		_, countErr := bf.db.session.SelectBySql(
 			"SELECT COUNT(*) FROM space_member WHERE space_id=? AND uid=? AND status=1",
-			req.SpaceID, uid,
+			spaceID, uid,
 		).Load(&memberCount)
 		if countErr != nil {
-			bf.Error("校验Space归属失败", zap.String("spaceID", req.SpaceID), zap.Error(countErr))
+			bf.Error("校验Space归属失败", zap.String("spaceID", spaceID), zap.Error(countErr))
 		} else if memberCount > 0 {
 			_, spErr := bf.db.session.InsertBySql(
 				"INSERT IGNORE INTO space_member (space_id, uid, role, status, created_at, updated_at) VALUES (?, ?, 0, 1, NOW(), NOW())",
-				req.SpaceID, robotID,
+				spaceID, robotID,
 			).Exec()
 			if spErr != nil {
-				bf.Error("Bot加入Space失败", zap.String("spaceID", req.SpaceID), zap.Error(spErr))
+				bf.Error("Bot加入Space失败", zap.String("spaceID", spaceID), zap.Error(spErr))
 			}
 		} else {
-			bf.Warn("用户不属于指定Space，跳过", zap.String("uid", uid), zap.String("spaceID", req.SpaceID))
+			bf.Warn("用户不属于指定Space，跳过", zap.String("uid", uid), zap.String("spaceID", spaceID))
 		}
 	}
 

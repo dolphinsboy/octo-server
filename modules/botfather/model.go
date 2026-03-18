@@ -114,6 +114,7 @@ type userAPIKeyModel struct {
 	ID        int64  `json:"id"`
 	UID       string `json:"uid"`
 	APIKey    string `json:"api_key"`
+	SpaceID   string `json:"space_id"`
 	CreatedAt string `json:"created_at"`
 }
 

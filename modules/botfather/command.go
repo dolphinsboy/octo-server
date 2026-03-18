@@ -405,7 +405,10 @@ func (h *commandHandler) handleQuickstart(fromUID string) {
 	h.sm.Clear(fromUID)
 	realUID := extractRealUID(fromUID)
 
-	// 获取或创建 User API Key
+	// 获取当前 Space ID，绑定到 API Key
+	spaceID := h.resolveSpaceID(fromUID)
+
+	// 获取或创建 User API Key（绑定当前 Space）
 	existing, err := h.db.queryUserAPIKeyByUID(realUID)
 	if err != nil {
 		h.Error("查询User API Key失败", zap.Error(err))
@@ -415,6 +418,12 @@ func (h *commandHandler) handleQuickstart(fromUID string) {
 	apiKey := ""
 	if existing != nil {
 		apiKey = existing.APIKey
+		// 每次 quickstart 更新绑定的 Space（用户可能切换了 Space）
+		if spaceID != "" && existing.SpaceID != spaceID {
+			if err := h.db.updateUserAPIKeySpaceID(realUID, spaceID); err != nil {
+				h.Error("更新API Key绑定Space失败", zap.Error(err))
+			}
+		}
 	} else {
 		apiKey, err = generateUserAPIKey()
 		if err != nil {
@@ -422,7 +431,7 @@ func (h *commandHandler) handleQuickstart(fromUID string) {
 			h.reply(fromUID, "操作失败，请稍后重试。")
 			return
 		}
-		err = h.db.insertUserAPIKey(realUID, apiKey)
+		err = h.db.insertUserAPIKey(realUID, apiKey, spaceID)
 		if err != nil {
 			h.Error("保存User API Key失败", zap.Error(err))
 			h.reply(fromUID, "操作失败，请稍后重试。")
@@ -436,13 +445,6 @@ func (h *commandHandler) handleQuickstart(fromUID string) {
 		apiURL = fmt.Sprintf("http://%s:8090", cfg.External.IP)
 	}
 
-	// 获取当前 Space ID，放入引导词让 AI Agent 创建 Bot 时指定
-	spaceID := h.resolveSpaceID(fromUID)
-	spaceLine := ""
-	if spaceID != "" {
-		spaceLine = fmt.Sprintf("\nMy Space ID: %s", spaceID)
-	}
-
 	h.reply(fromUID, fmt.Sprintf(`🚀 Quickstart
 
 将下面的提示词复制发给你的 AI Agent：
@@ -451,15 +453,15 @@ func (h *commandHandler) handleQuickstart(fromUID string) {
 Read %s/v1/bot/skill.md to learn the DMWork Bot API (includes User API, multi-bot config, and OpenClaw setup).
 
 My User API Key: %s
-API server: %s%s
+API server: %s
 
 Create a bot, get the bot_token, then follow the skill.md instructions to connect.
 All User API endpoints require: Authorization: Bearer %s
 ---
 
-💡 User API Key 可反复使用，用于管理你的所有 Bot
+💡 User API Key 可反复使用，用于管理你的所有 Bot（Bot 会自动加入你当前的 Space）
 🔑 你的 API Key: %s`,
-		apiURL, apiKey, apiURL, spaceLine, apiKey, apiKey))
+		apiURL, apiKey, apiURL, apiKey, apiKey))
 }
 
 func (h *commandHandler) handleHelp(fromUID string) {

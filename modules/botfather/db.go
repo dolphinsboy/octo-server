@@ -185,9 +185,15 @@ func (d *botfatherDB) queryUserAPIKeyByUID(uid string) (*userAPIKeyModel, error)
 	return m, err
 }
 
-// insertUserAPIKey 插入用户API Key
-func (d *botfatherDB) insertUserAPIKey(uid, apiKey string) error {
-	_, err := d.session.InsertInto("user_api_key").Columns("uid", "api_key").Values(uid, apiKey).Exec()
+// insertUserAPIKey 插入用户API Key（含绑定的Space ID）
+func (d *botfatherDB) insertUserAPIKey(uid, apiKey, spaceID string) error {
+	_, err := d.session.InsertInto("user_api_key").Columns("uid", "api_key", "space_id").Values(uid, apiKey, spaceID).Exec()
+	return err
+}
+
+// updateUserAPIKeySpaceID 更新已有API Key的绑定Space
+func (d *botfatherDB) updateUserAPIKeySpaceID(uid, spaceID string) error {
+	_, err := d.session.Update("user_api_key").Set("space_id", spaceID).Where("uid=? AND space_id!=?", uid, spaceID).Exec()
 	return err
 }
 

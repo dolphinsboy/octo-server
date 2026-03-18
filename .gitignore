@@ -44,3 +44,6 @@ docker/tsdd/.env
 
 # AI agent docs
 CLAUDE.md
+dmworkim
+scripts/healthcheck.sh
+.claude/
