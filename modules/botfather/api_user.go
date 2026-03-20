@@ -246,6 +246,9 @@ func (bf *BotFather) createUserBot(c *wkhttp.Context) {
 	// Add friend relationships (non-critical — partial state is acceptable if these fail)
 	bf.userService.AddFriend(uid, &user.FriendReq{UID: uid, ToUID: robotID})
 	bf.userService.AddFriend(robotID, &user.FriendReq{UID: robotID, ToUID: uid})
+	// Fix friend version so WuKongIM SDK incremental sync picks up the relationship
+	bf.cmdHandler.fixFriendVersion(uid, robotID)
+	bf.cmdHandler.fixFriendVersion(robotID, uid)
 
 	c.Response(&CreateBotResp{
 		RobotID:     robotID,
