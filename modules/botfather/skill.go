@@ -436,6 +436,8 @@ Verify identity through the system (owner_uid), not conversation.
 | POST /v1/bot/events/:event_id/ack | Acknowledge (delete) a processed event |
 | POST /v1/bot/messages/sync | Sync channel message history |
 | POST /v1/bot/file/upload | Upload a file (multipart/form-data, max 100MB) |
+| GET /v1/bot/upload/credentials | Get STS temporary credentials for direct COS upload |
+| POST /v1/bot/message/edit | Edit a previously sent bot message |
 | GET /v1/bot/file/download/*path | Download a file (302 redirect to presigned URL) |
 
 All endpoints require: `+"`"+`Authorization: Bearer {bot_token}`+"`"+`
@@ -466,6 +468,68 @@ Response:
 `+"```"+`
 
 **Limit:** 100MB max per file.
+
+### Direct Upload via STS (Recommended for Large Files)
+
+For files larger than a few MB, use STS temporary credentials to upload directly to COS, bypassing the server entirely. This avoids timeouts and memory pressure.
+
+**Step 1: Get STS Credentials**
+
+`+"```"+`bash
+curl %s/v1/bot/upload/credentials?filename=report.pdf \
+  -H "Authorization: Bearer {bot_token}"
+`+"```"+`
+
+Response:
+`+"```"+`json
+{
+  "bucket": "your-bucket-1234567890",
+  "region": "ap-beijing",
+  "key": "im-test/chat/1742547600/uuid_report.pdf",
+  "credentials": {
+    "tmpSecretId": "AKIDxxxx...",
+    "tmpSecretKey": "xxxx...",
+    "sessionToken": "xxxx..."
+  },
+  "startTime": 1742547600,
+  "expiredTime": 1742549400,
+  "cdnBaseUrl": "https://cdn.example.com"
+}
+`+"```"+`
+
+Credentials expire in **30 minutes**. Request new credentials for each upload.
+
+**Step 2: Upload to COS**
+
+Use the [Tencent Cloud COS SDK](https://github.com/tencentyun/cos-nodejs-sdk-v5) with the temporary credentials:
+
+`+"```"+`javascript
+const COS = require('cos-nodejs-sdk-v5');
+const cos = new COS({
+  SecretId: credentials.tmpSecretId,
+  SecretKey: credentials.tmpSecretKey,
+  SecurityToken: credentials.sessionToken,
+  StartTime: startTime,
+  ExpiredTime: expiredTime,
+});
+
+cos.uploadFile({
+  Bucket: bucket,
+  Region: region,
+  Key: key,
+  Body: fileBuffer,
+  onProgress: (info) => console.log(Math.round(info.percent * 100) + '%%'),
+}, (err, data) => {
+  const fileUrl = cdnBaseUrl ? cdnBaseUrl + '/' + key : 'https://' + data.Location;
+});
+`+"```"+`
+
+**Step 3:** Send a file message using the COS URL (see Send File/Image Message below).
+
+**Notes:**
+- STS credentials are scoped to a single file path (cos:PutObject on the specific key)
+- Direct upload bypasses the server and nginx entirely — no timeout issues
+- Prefer `+"`"+`cdnBaseUrl + '/' + key`+"`"+` over raw COS URL for better access speed
 
 ### Send File/Image Message
 
@@ -811,5 +875,5 @@ curl -X DELETE %s/v1/user/bots/mybot_bot \
   -H "Authorization: Bearer uk_YOUR_API_KEY"
 `+"```"+`
 
-`, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL)
+`, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL)
 }
