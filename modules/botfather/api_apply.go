@@ -119,7 +119,11 @@ func (bf *BotFather) robotApply(c *wkhttp.Context) {
 	}
 
 	// 通知Owner
-	bf.notifyOwnerNewApply(loginUID, req.RobotUID, robot.CreatorUID, req.Remark)
+	applySpaceID := c.Query("space_id")
+	if applySpaceID == "" {
+		applySpaceID = c.GetHeader("X-Space-ID")
+	}
+	bf.notifyOwnerNewApply(loginUID, req.RobotUID, robot.CreatorUID, req.Remark, applySpaceID)
 
 	c.Response(map[string]interface{}{
 		"status":  "pending",
@@ -188,7 +192,8 @@ func (bf *BotFather) robotApplySure(c *wkhttp.Context) {
 	}
 
 	// 通知申请人
-	bf.notifyApplicantResult(apply.UID, apply.RobotUID, true)
+	sureSpaceID := space.GetCommonSpaceID(bf.ctx, apply.UID, apply.RobotUID)
+	bf.notifyApplicantResult(apply.UID, apply.RobotUID, true, sureSpaceID)
 
 	c.ResponseOK()
 }
@@ -241,7 +246,8 @@ func (bf *BotFather) robotApplyRefuse(c *wkhttp.Context) {
 	}
 
 	// 通知申请人
-	bf.notifyApplicantResult(apply.UID, apply.RobotUID, false)
+	refuseSpaceID := space.GetCommonSpaceID(bf.ctx, apply.UID, apply.RobotUID)
+	bf.notifyApplicantResult(apply.UID, apply.RobotUID, false, refuseSpaceID)
 
 	c.ResponseOK()
 }
@@ -363,13 +369,17 @@ func (bf *BotFather) createFriendRelation(userUID, robotUID string) error {
 	})
 
 	// 发送好友添加成功通知
+	bfCmdParam := map[string]interface{}{
+		"to_uid":   userUID,
+		"from_uid": robotUID,
+	}
+	if spaceID != "" {
+		bfCmdParam["space_id"] = spaceID
+	}
 	_ = bf.ctx.SendCMD(config.MsgCMDReq{
 		CMD:         common.CMDFriendAccept,
 		Subscribers: []string{userUID, robotUID},
-		Param: map[string]interface{}{
-			"to_uid":   userUID,
-			"from_uid": robotUID,
-		},
+		Param:       bfCmdParam,
 	})
 
 	// 发送欢迎消息
@@ -377,10 +387,14 @@ func (bf *BotFather) createFriendRelation(userUID, robotUID string) error {
 	if bf.ctx.GetConfig().Friend.AddedTipsText != "" {
 		content = bf.ctx.GetConfig().Friend.AddedTipsText
 	}
-	payload := []byte(util.ToJson(map[string]interface{}{
+	bfTipPayload := map[string]interface{}{
 		"content": content,
 		"type":    common.Tip,
-	}))
+	}
+	if spaceID != "" {
+		bfTipPayload["space_id"] = spaceID
+	}
+	payload := []byte(util.ToJson(bfTipPayload))
 	_ = bf.ctx.SendMessage(&config.MsgSendReq{
 		FromUID:     robotUID,
 		ChannelID:   userUID,
@@ -395,7 +409,7 @@ func (bf *BotFather) createFriendRelation(userUID, robotUID string) error {
 }
 
 // notifyOwnerNewApply 通知Owner有新的申请
-func (bf *BotFather) notifyOwnerNewApply(applicantUID, robotUID, ownerUID, remark string) {
+func (bf *BotFather) notifyOwnerNewApply(applicantUID, robotUID, ownerUID, remark string, spaceID string) {
 	applicantName := applicantUID
 	applicant, _ := bf.userService.GetUser(applicantUID)
 	if applicant != nil {
@@ -410,10 +424,14 @@ func (bf *BotFather) notifyOwnerNewApply(applicantUID, robotUID, ownerUID, remar
 	content := fmt.Sprintf("有人申请使用你的AI\n用户: %s (%s)\nAI: %s%s",
 		applicantName, applicantUID, robotUID, remarkText)
 
-	payload := []byte(util.ToJson(map[string]interface{}{
+	notifyPayload := map[string]interface{}{
 		"content": content,
 		"type":    common.Text,
-	}))
+	}
+	if spaceID != "" {
+		notifyPayload["space_id"] = spaceID
+	}
+	payload := []byte(util.ToJson(notifyPayload))
 	_ = bf.ctx.SendMessage(&config.MsgSendReq{
 		FromUID:     BotFatherUID,
 		ChannelID:   ownerUID,
@@ -426,7 +444,7 @@ func (bf *BotFather) notifyOwnerNewApply(applicantUID, robotUID, ownerUID, remar
 }
 
 // notifyApplicantResult 通知申请人审批结果
-func (bf *BotFather) notifyApplicantResult(applicantUID, robotUID string, approved bool) {
+func (bf *BotFather) notifyApplicantResult(applicantUID, robotUID string, approved bool, spaceID string) {
 	var content string
 	if approved {
 		content = fmt.Sprintf("你的AI使用申请已通过！\nAI: %s\n现在可以开始聊天了", robotUID)
@@ -434,10 +452,14 @@ func (bf *BotFather) notifyApplicantResult(applicantUID, robotUID string, approv
 		content = fmt.Sprintf("你的AI使用申请被拒绝\nAI: %s", robotUID)
 	}
 
-	payload := []byte(util.ToJson(map[string]interface{}{
+	resultPayload := map[string]interface{}{
 		"content": content,
 		"type":    common.Text,
-	}))
+	}
+	if spaceID != "" {
+		resultPayload["space_id"] = spaceID
+	}
+	payload := []byte(util.ToJson(resultPayload))
 	_ = bf.ctx.SendMessage(&config.MsgSendReq{
 		FromUID:     BotFatherUID,
 		ChannelID:   applicantUID,

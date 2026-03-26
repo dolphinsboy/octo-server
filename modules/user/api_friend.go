@@ -483,18 +483,28 @@ func (f *Friend) friendApply(c *wkhttp.Context) {
 		c.ResponseError(errors.New("提交事物错误"))
 		return
 	}
+	// 提取 space_id
+	spaceID := c.Query("space_id")
+	if spaceID == "" {
+		spaceID = c.GetHeader("X-Space-ID")
+	}
+
 	// 发送消息
+	cmdParam := map[string]interface{}{
+		"apply_uid":  fromUID,
+		"apply_name": fromName,
+		"to_uid":     toUser.UID,
+		"remark":     req.Remark,
+		"token":      token,
+	}
+	if spaceID != "" {
+		cmdParam["space_id"] = spaceID
+	}
 	err = f.ctx.SendCMD(config.MsgCMDReq{
 		CMD:         common.CMDFriendRequest,
 		ChannelID:   toUser.UID,
 		ChannelType: common.ChannelTypePerson.Uint8(),
-		Param: map[string]interface{}{
-			"apply_uid":  fromUID,
-			"apply_name": fromName,
-			"to_uid":     toUser.UID,
-			"remark":     req.Remark,
-			"token":      token,
-		},
+		Param:       cmdParam,
 	})
 	if err != nil {
 		f.Error("发送好友申请失败！", zap.Error(err))
@@ -508,13 +518,9 @@ func (f *Friend) friendApply(c *wkhttp.Context) {
 		_ = f.ctx.DB().Select("IFNULL(auto_approve,0)").From("robot").Where("robot_id=? AND status=1", toUser.UID).LoadOne(&autoApprove)
 		if autoApprove == 1 {
 			// 自动通过好友申请
-			go f.autoApproveFriend(fromUID, toUser.UID, token)
+			go f.autoApproveFriend(fromUID, toUser.UID, token, spaceID)
 		} else if botFriendApplyHook != nil {
 			// 需要 owner 审批，传递 space_id 保证通知隔离到正确 Space
-			spaceID := c.Query("space_id")
-			if spaceID == "" {
-				spaceID = c.GetHeader("X-Space-ID")
-			}
 			go botFriendApplyHook(fromUID, fromName, toUser.UID, req.Remark, token, spaceID)
 		}
 	}
@@ -524,7 +530,7 @@ func (f *Friend) friendApply(c *wkhttp.Context) {
 
 // 确认好友
 // autoApproveFriend Bot 自动通过好友申请
-func (f *Friend) autoApproveFriend(fromUID string, botUID string, token string) {
+func (f *Friend) autoApproveFriend(fromUID string, botUID string, token string, spaceID string) {
 	// 建立双向好友关系
 	tx, err := f.ctx.DB().Begin()
 	if err != nil {
@@ -565,14 +571,18 @@ func (f *Friend) autoApproveFriend(fromUID string, botUID string, token string) 
 		return
 	}
 	// 发送好友确认 CMD
+	acceptParam := map[string]interface{}{
+		"from_uid": botUID,
+		"to_uid":   fromUID,
+	}
+	if spaceID != "" {
+		acceptParam["space_id"] = spaceID
+	}
 	_ = f.ctx.SendCMD(config.MsgCMDReq{
 		CMD:         common.CMDFriendAccept,
 		ChannelID:   fromUID,
 		ChannelType: common.ChannelTypePerson.Uint8(),
-		Param: map[string]interface{}{
-			"from_uid": botUID,
-			"to_uid":   fromUID,
-		},
+		Param:       acceptParam,
 	})
 	f.Info("Bot auto approve friend", zap.String("bot", botUID), zap.String("user", fromUID))
 }
@@ -589,6 +599,10 @@ func (f *Friend) friendSure(c *wkhttp.Context) {
 	if err := req.Check(); err != nil {
 		c.ResponseError(err)
 		return
+	}
+	spaceID := c.Query("space_id")
+	if spaceID == "" {
+		spaceID = c.GetHeader("X-Space-ID")
 	}
 	key := f.ctx.GetConfig().Cache.FriendApplyTokenCachePrefix + req.Token + loginUID
 	tokenVaule, err := f.ctx.Cache().Get(key) // 获取申请人的uid
@@ -795,14 +809,18 @@ func (f *Friend) friendSure(c *wkhttp.Context) {
 	f.ctx.EventCommit(eventID)
 
 	// 发送确认消息给对方
+	sureCmdParam := map[string]interface{}{
+		"to_uid":    applyUID,
+		"from_uid":  loginUID,
+		"from_name": name,
+	}
+	if spaceID != "" {
+		sureCmdParam["space_id"] = spaceID
+	}
 	err = f.ctx.SendCMD(config.MsgCMDReq{
 		CMD:         common.CMDFriendAccept,
 		Subscribers: []string{applyUID, loginUID},
-		Param: map[string]interface{}{
-			"to_uid":    applyUID,
-			"from_uid":  loginUID,
-			"from_name": name,
-		},
+		Param:       sureCmdParam,
 	})
 	if err != nil {
 		f.Error("发送消息失败！", zap.Error(err))
@@ -813,10 +831,14 @@ func (f *Friend) friendSure(c *wkhttp.Context) {
 	if f.ctx.GetConfig().Friend.AddedTipsText != "" {
 		content = f.ctx.GetConfig().Friend.AddedTipsText
 	}
-	payload := []byte(util.ToJson(map[string]interface{}{
+	tipPayloadMap := map[string]interface{}{
 		"content": content,
 		"type":    common.Tip,
-	}))
+	}
+	if spaceID != "" {
+		tipPayloadMap["space_id"] = spaceID
+	}
+	payload := []byte(util.ToJson(tipPayloadMap))
 
 	err = f.ctx.SendMessage(&config.MsgSendReq{
 		FromUID:     loginUID,
@@ -833,10 +855,14 @@ func (f *Friend) friendSure(c *wkhttp.Context) {
 		return
 	}
 
-	payload = []byte(util.ToJson(map[string]interface{}{
+	remarkPayloadMap := map[string]interface{}{
 		"content": remark,
 		"type":    common.Text,
-	}))
+	}
+	if spaceID != "" {
+		remarkPayloadMap["space_id"] = spaceID
+	}
+	payload = []byte(util.ToJson(remarkPayloadMap))
 
 	err = f.ctx.SendMessage(&config.MsgSendReq{
 		FromUID:     applyUID,
