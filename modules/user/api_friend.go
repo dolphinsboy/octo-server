@@ -544,33 +544,83 @@ func (f *Friend) autoApproveFriend(fromUID string, botUID string, token string, 
 		}
 	}()
 
-	// fromUID -> botUID
-	err = f.db.InsertTx(&FriendModel{
-		UID:   fromUID,
-		ToUID: botUID,
-	}, tx)
+	version, err := f.ctx.GenSeq(common.FriendSeqKey)
 	if err != nil {
-		f.Warn("auto approve: 添加好友关系失败(可能已存在)", zap.Error(err))
+		tx.Rollback()
+		f.Error("auto approve: GenSeq 失败", zap.Error(err))
+		return
 	}
+
+	// fromUID -> botUID（处理 is_deleted=1 的已有记录）
+	existingFriend, _ := f.db.queryWithUID(fromUID, botUID)
+	if existingFriend != nil {
+		err = f.db.updateRelationshipTx(fromUID, botUID, 0, 0, existingFriend.SourceVercode, version, tx)
+		if err != nil {
+			tx.Rollback()
+			f.Error("auto approve: 恢复好友关系失败", zap.Error(err))
+			return
+		}
+	} else {
+		err = f.db.InsertTx(&FriendModel{
+			UID:     fromUID,
+			ToUID:   botUID,
+			Version: version,
+		}, tx)
+		if err != nil {
+			f.Warn("auto approve: 添加好友关系失败", zap.Error(err))
+		}
+	}
+
 	// botUID -> fromUID
-	err = f.db.InsertTx(&FriendModel{
-		UID:   botUID,
-		ToUID: fromUID,
-	}, tx)
-	if err != nil {
-		f.Warn("auto approve: 添加反向好友关系失败(可能已存在)", zap.Error(err))
+	existingReverse, _ := f.db.queryWithUID(botUID, fromUID)
+	if existingReverse != nil {
+		err = f.db.updateRelationshipTx(botUID, fromUID, 0, 0, existingReverse.SourceVercode, version, tx)
+		if err != nil {
+			tx.Rollback()
+			f.Error("auto approve: 恢复反向好友关系失败", zap.Error(err))
+			return
+		}
+	} else {
+		err = f.db.InsertTx(&FriendModel{
+			UID:     botUID,
+			ToUID:   fromUID,
+			Version: version,
+		}, tx)
+		if err != nil {
+			f.Warn("auto approve: 添加反向好友关系失败", zap.Error(err))
+		}
 	}
+
 	// 更新申请状态
 	apply, _ := f.db.queryApplyWithUidAndToUid(botUID, fromUID)
 	if apply != nil {
 		apply.Status = 1
 		_ = f.db.updateApplyTx(apply, tx)
 	}
+
+	// 发布好友确认事件（触发 IM 白名单添加 + 黑名单移除）
+	eventID, err := f.ctx.EventBegin(&wkevent.Data{
+		Event: event.FriendSure,
+		Type:  wkevent.None,
+		Data: map[string]interface{}{
+			"uid":    botUID,
+			"to_uid": fromUID,
+		},
+	}, tx)
+	if err != nil {
+		f.Error("auto approve: 发布好友确认事件失败", zap.Error(err))
+		tx.Rollback()
+		return
+	}
+
 	if err = tx.Commit(); err != nil {
 		tx.Rollback()
 		f.Error("auto approve: 提交事务失败", zap.Error(err))
 		return
 	}
+
+	f.ctx.EventCommit(eventID)
+
 	// 发送好友确认 CMD
 	acceptParam := map[string]interface{}{
 		"from_uid": botUID,

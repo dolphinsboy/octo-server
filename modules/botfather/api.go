@@ -255,12 +255,13 @@ func (bf *BotFather) initBotFatherUser() {
 			return
 		}
 		err = bf.db.insertRobotTx(&robotModel{
-			AppID:    appResp.AppID,
-			RobotID:  BotFatherUID,
-			Username: BotFatherUID,
-			Token:    appResp.AppKey,
-			Version:  robotVersion,
-			Status:   1,
+			AppID:       appResp.AppID,
+			RobotID:     BotFatherUID,
+			Username:    BotFatherUID,
+			Token:       appResp.AppKey,
+			Version:     robotVersion,
+			Status:      1,
+			AutoApprove: 1,
 		}, tx)
 		if err != nil {
 			tx.Rollback()
@@ -277,6 +278,9 @@ func (bf *BotFather) initBotFatherUser() {
 
 	// 确保BotFather与所有用户建立好友关系
 	bf.ensureBotFatherFriends()
+
+	// 确保 BotFather auto_approve=1（修复已有部署）
+	_, _ = bf.db.session.UpdateBySql("UPDATE robot SET auto_approve=1 WHERE robot_id=? AND auto_approve=0", BotFatherUID).Exec()
 
 	// 修复孤儿 Bot — user 表有 robot=1 但 robot 表无记录（#234 遗留数据）
 	bf.repairOrphanBots()
@@ -330,6 +334,12 @@ func (bf *BotFather) ensureBotFatherFriends() {
 	`, BotFatherUID, systemExcludedUIDs[0], systemExcludedUIDs[1], systemExcludedUIDs[2], BotFatherUID).Exec()
 	if err != nil {
 		bf.Warn("批量添加BotFather好友关系失败", zap.Error(err))
+	}
+
+	// 恢复已删除 BotFather 好友关系的用户（用户删除后 is_deleted=1，服务重启时自动修复）
+	_, err = bf.db.session.UpdateBySql("UPDATE friend SET is_deleted=0 WHERE to_uid=? AND is_deleted=1", BotFatherUID).Exec()
+	if err != nil {
+		bf.Warn("恢复已删除的BotFather好友关系失败", zap.Error(err))
 	}
 }
 
