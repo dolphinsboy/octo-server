@@ -153,8 +153,8 @@ func (bf *BotFather) handleSpaceMemberJoinEvent(data []byte, commit config.Event
 		return
 	}
 
-	// Deduplicate with Redis — per uid only (DM is shared across Spaces)
-	sentKey := fmt.Sprintf("botfather:welcome:sent:%s", uid)
+	// Deduplicate with Redis — per uid+spaceID (each Space gets its own welcome)
+	sentKey := fmt.Sprintf("botfather:welcome:sent:%s:%s", uid, spaceID)
 	sentValue, err := bf.ctx.GetRedisConn().GetString(sentKey)
 	if err != nil && err.Error() != "redis: nil" {
 		bf.Warn("检查Space欢迎消息发送状态失败", zap.Error(err), zap.String("uid", uid), zap.String("spaceID", spaceID))
