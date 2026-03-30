@@ -29,12 +29,15 @@ type VoiceConfig struct {
 
 // NewVoiceConfigFromEnv reads voice config from environment variables
 func NewVoiceConfigFromEnv() *VoiceConfig {
+	models := make([]string, len(defaultModels))
+	copy(models, defaultModels)
+
 	cfg := &VoiceConfig{
 		LiteLLMUrl:   os.Getenv("VOICE_LITELLM_URL"),
 		LiteLLMKey:   os.Getenv("VOICE_LITELLM_KEY"),
 		Timeout:      defaultTimeout,
 		TotalTimeout: defaultTotalTimeout,
-		Models:       defaultModels,
+		Models:       models,
 		MaxDuration:  defaultMaxDuration,
 		MaxFileSize:  defaultMaxFileSize,
 	}

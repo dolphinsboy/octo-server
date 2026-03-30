@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -167,7 +168,8 @@ func (e *apiError) Error() string {
 
 // isNonRetryableError returns true for 4xx errors other than 429
 func isNonRetryableError(err error) bool {
-	if ae, ok := err.(*apiError); ok {
+	var ae *apiError
+	if errors.As(err, &ae) {
 		return ae.StatusCode >= 400 && ae.StatusCode < 500 && ae.StatusCode != 429
 	}
 	return false
