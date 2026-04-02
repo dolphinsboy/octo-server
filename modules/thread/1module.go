@@ -79,13 +79,12 @@ func init() {
 					}
 
 					channelInfoMap := map[string]interface{}{}
-					// 已删除或归档的子区标记为禁用
+					// 只有删除的子区才禁用，归档的子区允许查看历史消息
 					if thread.Status == ThreadStatusDeleted {
 						channelInfoMap["ban"] = 1
 					}
-					if thread.Status == ThreadStatusArchived {
-						channelInfoMap["ban"] = 1 // 归档的子区也禁止发消息
-					}
+					// 归档状态通过 status 字段返回，前端根据此字段禁止发消息
+					channelInfoMap["status"] = thread.Status
 
 					return channelInfoMap, nil
 				},
