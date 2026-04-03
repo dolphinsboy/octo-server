@@ -210,6 +210,19 @@ func (q *QRCode) handleJoinGroup(loginUID string, qrCodeModel common.QRCodeModel
 			"group_no": groupNo,
 		}), nil
 	}
+	// 查询群信息用于预览
+	groupModel, err := q.groupDB.QueryWithGroupNo(groupNo)
+	if err != nil {
+		return nil, err
+	}
+	if groupModel == nil {
+		return nil, errors.New("群不存在")
+	}
+	memberCount, err := q.groupDB.QueryMemberCount(groupNo)
+	if err != nil {
+		return nil, err
+	}
+
 	authCode := util.GenerUUID()
 	err = q.ctx.GetRedisConn().SetAndExpire(fmt.Sprintf("%s%s", common.AuthCodeCachePrefix, authCode), util.ToJson(map[string]interface{}{
 		"group_no":  groupNo,   // 群编号
@@ -221,7 +234,10 @@ func (q *QRCode) handleJoinGroup(loginUID string, qrCodeModel common.QRCodeModel
 		return nil, err
 	}
 	return NewHandleResult(ForwardNative, HandlerTypeGroup, map[string]interface{}{
-		"group_no":  groupNo,
-		"auth_code": authCode,
+		"group_no":     groupNo,
+		"auth_code":    authCode,
+		"name":         groupModel.Name,
+		"avatar":       fmt.Sprintf("groups/%s/avatar", groupNo),
+		"member_count": memberCount,
 	}), nil
 }
