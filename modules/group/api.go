@@ -2797,10 +2797,10 @@ func (g *Group) removeUserFromGroupThreads(groupNo, uid string) {
 		ShortID string `db:"short_id"`
 	}
 	var threads []threadInfo
-	_, err := g.db.session.Select("t.short_id").
-		From("thread t").
-		Join("thread_member tm", "t.id = tm.thread_id").
-		Where("t.group_no=? AND tm.uid=? AND t.status!=3", groupNo, uid).
+	_, err := g.db.session.Select("thread.short_id").
+		From("thread").
+		Join("thread_member", "thread.id = thread_member.thread_id").
+		Where("thread.group_no=? AND thread_member.uid=? AND thread.status!=3", groupNo, uid).
 		Load(&threads)
 	if err != nil {
 		g.Error("查询用户子区失败", zap.Error(err), zap.String("groupNo", groupNo), zap.String("uid", uid))
