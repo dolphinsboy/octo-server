@@ -78,6 +78,21 @@ func createMultipartRequestWithOpts(t *testing.T, path string, audioData []byte,
 	return req
 }
 
+func newTestAPIConfig(litellmURL string) *VoiceConfig {
+	return &VoiceConfig{
+		LiteLLMUrl:   litellmURL,
+		LiteLLMKey:   "test-key",
+		Timeout:      5,
+		TotalTimeout: 10,
+		Models:       []string{"test-model"},
+		GPTModels:    []string{"gpt-test"},
+		MaxDuration:  60,
+		MaxFileSize:  5 * 1024 * 1024,
+		Engine:       "gemini",
+		EditMode:     "edit",
+	}
+}
+
 func TestTranscribeAPI_Success(t *testing.T) {
 	// Mock LiteLLM server
 	litellmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,17 +104,7 @@ func TestTranscribeAPI_Success(t *testing.T) {
 	}))
 	defer litellmServer.Close()
 
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   litellmServer.URL,
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-		Engine:       "gemini",
-	}
-
+	cfg := newTestAPIConfig(litellmServer.URL)
 	router := setupTestRouter(cfg, "")
 
 	w := httptest.NewRecorder()
@@ -114,7 +119,6 @@ func TestTranscribeAPI_Success(t *testing.T) {
 	assert.Equal(t, float64(200), resp["status"])
 	assert.Equal(t, "Transcribed text", resp["text"])
 	assert.Equal(t, "test-model", resp["m"])
-	assert.Equal(t, "ge", resp["engine"])
 }
 
 func TestTranscribeAPI_WithContextText(t *testing.T) {
@@ -122,9 +126,9 @@ func TestTranscribeAPI_WithContextText(t *testing.T) {
 		var req chatCompletionRequest
 		json.NewDecoder(r.Body).Decode(&req)
 
-		// Verify prompt contains context
+		// In edit mode, prompt uses modifyPromptTemplate
 		prompt := req.Messages[0].Content[0].Text
-		assert.Contains(t, prompt, "已有文本")
+		assert.Contains(t, prompt, "已有以下文本")
 		assert.Contains(t, prompt, "my existing content")
 
 		resp := chatCompletionResponse{
@@ -135,16 +139,7 @@ func TestTranscribeAPI_WithContextText(t *testing.T) {
 	}))
 	defer litellmServer.Close()
 
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   litellmServer.URL,
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
-
+	cfg := newTestAPIConfig(litellmServer.URL)
 	router := setupTestRouter(cfg, "")
 
 	w := httptest.NewRecorder()
@@ -159,16 +154,7 @@ func TestTranscribeAPI_WithContextText(t *testing.T) {
 }
 
 func TestTranscribeAPI_MissingAudioFile(t *testing.T) {
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   "https://unused.example.com",
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
-
+	cfg := newTestAPIConfig("https://unused.example.com")
 	router := setupTestRouter(cfg, "")
 
 	w := httptest.NewRecorder()
@@ -181,16 +167,8 @@ func TestTranscribeAPI_MissingAudioFile(t *testing.T) {
 }
 
 func TestTranscribeAPI_FileSizeExceeded(t *testing.T) {
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   "https://unused.example.com",
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  100, // Very small limit
-	}
-
+	cfg := newTestAPIConfig("https://unused.example.com")
+	cfg.MaxFileSize = 100 // Very small limit
 	router := setupTestRouter(cfg, "")
 
 	// Create a file larger than 100 bytes
@@ -210,16 +188,7 @@ func TestTranscribeAPI_ServerError(t *testing.T) {
 	}))
 	defer litellmServer.Close()
 
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   litellmServer.URL,
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
-
+	cfg := newTestAPIConfig(litellmServer.URL)
 	router := setupTestRouter(cfg, "")
 
 	w := httptest.NewRecorder()
@@ -239,6 +208,8 @@ func TestGetConfigAPI_Enabled(t *testing.T) {
 		Models:       []string{"test-model"},
 		MaxDuration:  90,
 		MaxFileSize:  5 * 1024 * 1024,
+		Engine:       "gemini",
+		EditMode:     "edit",
 	}
 
 	router := setupTestRouter(cfg, "")
@@ -253,6 +224,8 @@ func TestGetConfigAPI_Enabled(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, true, resp["enabled"])
 	assert.Equal(t, float64(90), resp["max_duration"])
+	assert.Equal(t, "gm", resp["engine"])
+	assert.Equal(t, "edit", resp["edit_mode"])
 }
 
 func TestGetConfigAPI_Disabled(t *testing.T) {
@@ -263,6 +236,8 @@ func TestGetConfigAPI_Disabled(t *testing.T) {
 		Models:       []string{"test-model"},
 		MaxDuration:  60,
 		MaxFileSize:  5 * 1024 * 1024,
+		Engine:       "gemini",
+		EditMode:     "edit",
 	}
 
 	router := setupTestRouter(cfg, "")
@@ -303,16 +278,7 @@ func TestTranscribeAPI_AudioRequestFormat(t *testing.T) {
 	}))
 	defer litellmServer.Close()
 
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   litellmServer.URL,
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
-
+	cfg := newTestAPIConfig(litellmServer.URL)
 	router := setupTestRouter(cfg, "")
 
 	w := httptest.NewRecorder()
@@ -328,7 +294,7 @@ func TestTranscribeAPI_WithChatContext(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&req)
 
 		prompt := req.Messages[0].Content[0].Text
-		assert.Contains(t, prompt, "以下聊天记录仅用于辅助识别专有名词拼写")
+		assert.Contains(t, prompt, "辅助识别专有名词拼写")
 		assert.Contains(t, prompt, "Alice: 明天开会")
 
 		resp := chatCompletionResponse{
@@ -339,16 +305,7 @@ func TestTranscribeAPI_WithChatContext(t *testing.T) {
 	}))
 	defer litellmServer.Close()
 
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   litellmServer.URL,
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
-
+	cfg := newTestAPIConfig(litellmServer.URL)
 	router := setupTestRouter(cfg, "")
 	w := httptest.NewRecorder()
 	req := createMultipartRequestWithOpts(t, "/v1/voice/transcribe", []byte("fake-audio"), multipartOpts{
@@ -377,15 +334,7 @@ func TestTranscribeAPI_ChatContextTruncation(t *testing.T) {
 	}))
 	defer litellmServer.Close()
 
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   litellmServer.URL,
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
+	cfg := newTestAPIConfig(litellmServer.URL)
 
 	// Create chat context that exceeds maxChatContextLength
 	longPrefix := strings.Repeat("A", 5000) // will be truncated away
@@ -413,7 +362,7 @@ func TestTranscribeAPI_EmptyChatContext(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&req)
 
 		prompt := req.Messages[0].Content[0].Text
-		assert.NotContains(t, prompt, "以下是当前聊天的最近对话记录")
+		assert.NotContains(t, prompt, "辅助识别专有名词拼写")
 
 		resp := chatCompletionResponse{
 			Choices: []choice{{Message: responseMessage{Content: "plain transcription"}}},
@@ -423,16 +372,7 @@ func TestTranscribeAPI_EmptyChatContext(t *testing.T) {
 	}))
 	defer litellmServer.Close()
 
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   litellmServer.URL,
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Models:       []string{"test-model"},
-		MaxDuration:  60,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
-
+	cfg := newTestAPIConfig(litellmServer.URL)
 	router := setupTestRouter(cfg, "")
 	w := httptest.NewRecorder()
 	// No chat_context field at all
@@ -444,6 +384,8 @@ func TestTranscribeAPI_EmptyChatContext(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, "plain transcription", resp["text"])
 }
+
+// --- GPT engine API tests ---
 
 func TestTranscribeAPI_GPTEngine(t *testing.T) {
 	litellmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -462,6 +404,7 @@ func TestTranscribeAPI_GPTEngine(t *testing.T) {
 		GPTModels:    []string{"gpt-4o-mini-transcribe"},
 		MaxDuration:  60,
 		MaxFileSize:  5 * 1024 * 1024,
+		EditMode:     "append",
 	}
 
 	router := setupTestRouter(cfg, "")
@@ -476,7 +419,7 @@ func TestTranscribeAPI_GPTEngine(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	assert.Equal(t, "GPT transcribed", resp["text"])
 	assert.Equal(t, "g4omt", resp["m"])
-	assert.Equal(t, "gt", resp["engine"])
+	assert.Equal(t, "gp", resp["engine"])
 }
 
 func TestTranscribeAPI_GeminiEngineShortened(t *testing.T) {
@@ -498,6 +441,7 @@ func TestTranscribeAPI_GeminiEngineShortened(t *testing.T) {
 		Models:       []string{"gemini-3-flash-preview"},
 		MaxDuration:  60,
 		MaxFileSize:  5 * 1024 * 1024,
+		EditMode:     "edit",
 	}
 
 	router := setupTestRouter(cfg, "")
@@ -510,60 +454,70 @@ func TestTranscribeAPI_GeminiEngineShortened(t *testing.T) {
 
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.Equal(t, "ge", resp["engine"])
+	assert.Equal(t, "gm", resp["engine"])
 }
 
-func TestGetConfigAPI_EngineGemini(t *testing.T) {
+// --- contextText truncation tests ---
+
+func TestTranscribeAPI_ContextTextTruncation(t *testing.T) {
+	var receivedPrompt string
+	litellmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req chatCompletionRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		receivedPrompt = req.Messages[0].Content[0].Text
+
+		resp := chatCompletionResponse{
+			Choices: []choice{{Message: responseMessage{Content: "OK"}}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer litellmServer.Close()
+
+	cfg := newTestAPIConfig(litellmServer.URL)
+
+	longPrefix := strings.Repeat("X", 5000)
+	longSuffix := strings.Repeat("Y", maxContextTextLength)
+	longContextText := longPrefix + longSuffix
+
+	router := setupTestRouter(cfg, "")
+	w := httptest.NewRecorder()
+	req := createMultipartRequest(t, "/v1/voice/transcribe", []byte("fake-audio"), longContextText)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	// Should keep the tail (recent text), truncate the head
+	assert.Contains(t, receivedPrompt, longSuffix)
+	assert.NotContains(t, receivedPrompt, longPrefix)
+}
+
+// --- getConfig edit_mode and engine tests ---
+
+func TestGetConfigAPI_EditModeAndEngine(t *testing.T) {
 	cfg := &VoiceConfig{
-		LiteLLMUrl:   "https://example.com",
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Engine:       "gemini",
-		Models:       []string{"test-model"},
-		MaxDuration:  90,
-		MaxFileSize:  5 * 1024 * 1024,
+		LiteLLMUrl:  "https://example.com",
+		LiteLLMKey:  "key",
+		Models:      []string{"m"},
+		GPTModels:   []string{"gpt-m"},
+		MaxDuration: 60,
+		MaxFileSize: 5 * 1024 * 1024,
+		Engine:      "gpt",
+		EditMode:    "append",
 	}
 
 	router := setupTestRouter(cfg, "")
-
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", "/v1/voice/config", nil)
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-
 	var resp map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.Equal(t, "ge", resp["engine"])
+	assert.Equal(t, "gp", resp["engine"])
+	assert.Equal(t, "append", resp["edit_mode"])
 }
 
-func TestGetConfigAPI_EngineGPT(t *testing.T) {
-	cfg := &VoiceConfig{
-		LiteLLMUrl:   "https://example.com",
-		LiteLLMKey:   "test-key",
-		Timeout:      5,
-		TotalTimeout: 10,
-		Engine:       "gpt",
-		GPTModels:    []string{"gpt-4o-mini-transcribe"},
-		MaxDuration:  90,
-		MaxFileSize:  5 * 1024 * 1024,
-	}
-
-	router := setupTestRouter(cfg, "")
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/v1/voice/config", nil)
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &resp)
-	assert.Equal(t, "gt", resp["engine"])
-}
-
-func TestShortenModelName_GPT(t *testing.T) {
+func TestShortenModelName(t *testing.T) {
 	assert.Equal(t, "g4omt", shortenModelName("gpt-4o-mini-transcribe"))
 	assert.Equal(t, "g31pp", shortenModelName("gemini-3.1-pro-preview"))
 	assert.Equal(t, "g3fp", shortenModelName("gemini-3-flash-preview"))
@@ -572,7 +526,7 @@ func TestShortenModelName_GPT(t *testing.T) {
 }
 
 func TestShortenEngineName(t *testing.T) {
-	assert.Equal(t, "ge", shortenEngineName("gemini"))
-	assert.Equal(t, "gt", shortenEngineName("gpt"))
-	assert.Equal(t, "unknown", shortenEngineName("unknown"))
+	assert.Equal(t, "gm", shortenEngineName("gemini"))
+	assert.Equal(t, "gp", shortenEngineName("gpt"))
+	assert.Equal(t, "other", shortenEngineName("other"))
 }

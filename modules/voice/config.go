@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
-	"go.uber.org/zap"
 )
 
 const (
@@ -16,6 +15,7 @@ const (
 	defaultMaxDuration   = 60
 	defaultMaxFileSize   = 5 * 1024 * 1024 // 5MB
 	maxChatContextLength = 10000           // max chat_context characters
+	maxContextTextLength = 10000           // max context_text characters
 )
 
 var defaultModels = []string{"gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro"}
@@ -33,6 +33,7 @@ type VoiceConfig struct {
 	Engine       string   // "gemini" or "gpt"
 	GPTModels    []string // model fallback chain for GPT engine
 	Language     string   // language code for GPT engine, empty = auto-detect
+	EditMode     string   // "edit" or "append"
 }
 
 // NewVoiceConfigFromEnv reads voice config from environment variables
@@ -92,20 +93,14 @@ func NewVoiceConfigFromEnv() *VoiceConfig {
 		}
 	}
 
-	if v := os.Getenv("VOICE_ENGINE"); v != "" {
-		if v == "gpt" || v == "gemini" {
-			cfg.Engine = v
-		} else {
-			lg := log.NewTLog("VoiceConfig")
-			lg.Warn("unknown VOICE_ENGINE value, defaulting to gemini",
-				zap.String("value", v))
-		}
+	if v := os.Getenv("VOICE_ENGINE"); v == "gpt" || v == "gemini" {
+		cfg.Engine = v
 	}
 
 	if v := os.Getenv("VOICE_GPT_MODELS"); v != "" {
-		parts := strings.Split(v, ",")
-		trimmed := make([]string, 0, len(parts))
-		for _, m := range parts {
+		models := strings.Split(v, ",")
+		trimmed := make([]string, 0, len(models))
+		for _, m := range models {
 			m = strings.TrimSpace(m)
 			if m != "" {
 				trimmed = append(trimmed, m)
@@ -116,7 +111,27 @@ func NewVoiceConfigFromEnv() *VoiceConfig {
 		}
 	}
 
-	cfg.Language = os.Getenv("VOICE_LANGUAGE")
+	if v := os.Getenv("VOICE_LANGUAGE"); v != "" {
+		cfg.Language = v
+	}
+
+	// EditMode: explicit setting takes priority, otherwise auto-decide by engine
+	if v := os.Getenv("VOICE_EDIT_MODE"); v == "edit" || v == "append" {
+		cfg.EditMode = v
+	} else {
+		if cfg.Engine == "gpt" {
+			cfg.EditMode = "append"
+		} else {
+			cfg.EditMode = "edit"
+		}
+	}
+
+	// GPT does not support edit mode, force to append
+	if cfg.Engine == "gpt" && cfg.EditMode == "edit" {
+		lg := log.NewTLog("VoiceConfig")
+		lg.Warn("GPT engine does not support edit mode, forcing append")
+		cfg.EditMode = "append"
+	}
 
 	return cfg
 }
@@ -129,12 +144,11 @@ func (c *VoiceConfig) Validate() error {
 	if c.LiteLLMKey == "" {
 		return errors.New("VOICE_LITELLM_KEY is required")
 	}
-	switch c.Engine {
-	case "gpt":
+	if c.Engine == "gpt" {
 		if len(c.GPTModels) == 0 {
-			return errors.New("VOICE_GPT_MODELS is required when VOICE_ENGINE=gpt")
+			return errors.New("VOICE_GPT_MODELS is required for GPT engine")
 		}
-	default: // gemini
+	} else {
 		if len(c.Models) == 0 {
 			return errors.New("VOICE_MODELS is required")
 		}

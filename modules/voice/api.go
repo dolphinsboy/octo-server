@@ -72,6 +72,12 @@ func (v *Voice) transcribe(c *wkhttp.Context) {
 	}
 
 	contextText := c.Request.FormValue("context_text")
+	if len(contextText) > maxContextTextLength {
+		v.Warn("context_text exceeds max length, truncating to keep recent text",
+			zap.Int("original_length", len(contextText)),
+			zap.Int("max_length", maxContextTextLength))
+		contextText = contextText[len(contextText)-maxContextTextLength:]
+	}
 
 	chatContext := c.Request.FormValue("chat_context")
 	if len(chatContext) > maxChatContextLength {
@@ -106,6 +112,7 @@ func (v *Voice) getConfig(c *wkhttp.Context) {
 		"enabled":      enabled,
 		"max_duration": v.cfg.MaxDuration,
 		"engine":       shortenEngineName(v.cfg.Engine),
+		"edit_mode":    v.cfg.EditMode,
 	})
 }
 
@@ -127,9 +134,9 @@ func shortenModelName(model string) string {
 func shortenEngineName(engine string) string {
 	switch engine {
 	case "gemini":
-		return "ge"
+		return "gm"
 	case "gpt":
-		return "gt"
+		return "gp"
 	default:
 		return engine
 	}
