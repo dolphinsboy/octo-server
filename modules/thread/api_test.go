@@ -671,3 +671,88 @@ func TestCreateThread_CreatorAsMember(t *testing.T) {
 	// 验证创建者 UID
 	assert.Equal(t, testutil.UID, createResp.CreatorUID)
 }
+
+// ==================== 消息监听器测试 ====================
+
+// TestOnMessages_AutoUnarchive 验证归档子区收到消息后自动解档
+func TestOnMessages_AutoUnarchive(t *testing.T) {
+	s, ctx := setupTestData(t)
+	groupNo := createTestGroup(t, ctx)
+
+	// 创建并归档子区
+	shortID := createThreadViaAPI(t, s, groupNo, "自动解档测试")
+	archiveThread(t, s, groupNo, shortID)
+
+	// 验证已归档
+	db := NewDB(ctx)
+	thread, _ := db.QueryByGroupNoAndShortID(groupNo, shortID)
+	assert.Equal(t, ThreadStatusArchived, thread.Status)
+
+	// 模拟收到消息
+	api := New(ctx)
+	api.onMessages([]*config.MessageResp{
+		{
+			ChannelID:   BuildChannelID(groupNo, shortID),
+			ChannelType: 5, // ChannelTypeCommunityTopic
+			FromUID:     testutil.UID,
+		},
+	})
+
+	// 验证自动解档
+	thread, _ = db.QueryByGroupNoAndShortID(groupNo, shortID)
+	assert.Equal(t, ThreadStatusActive, thread.Status)
+}
+
+// TestOnMessages_AutoJoin 验证发送者不是子区成员时自动加入
+func TestOnMessages_AutoJoin(t *testing.T) {
+	s, ctx := setupTestData(t)
+	groupNo := createTestGroup(t, ctx)
+
+	// 创建子区（testutil.UID 是创建者，自动成为成员）
+	shortID := createThreadViaAPI(t, s, groupNo, "自动加入测试")
+
+	// 验证 user2 不是子区成员
+	db := NewDB(ctx)
+	thread, _ := db.QueryByGroupNoAndShortID(groupNo, shortID)
+	isMember, _ := db.ExistMember(thread.Id, "user2")
+	assert.False(t, isMember)
+
+	// 模拟 user2 发送消息
+	api := New(ctx)
+	api.onMessages([]*config.MessageResp{
+		{
+			ChannelID:   BuildChannelID(groupNo, shortID),
+			ChannelType: 5, // ChannelTypeCommunityTopic
+			FromUID:     "user2",
+		},
+	})
+
+	// 验证 user2 自动加入子区
+	isMember, _ = db.ExistMember(thread.Id, "user2")
+	assert.True(t, isMember, "user2 should be auto-joined as member")
+}
+
+// TestOnMessages_IgnoreNonThreadChannel 验证忽略非子区频道
+func TestOnMessages_IgnoreNonThreadChannel(t *testing.T) {
+	_, ctx := setupTestData(t)
+
+	api := New(ctx)
+
+	// 不应 panic 或报错
+	api.onMessages([]*config.MessageResp{
+		{
+			ChannelID:   "some-group-id",
+			ChannelType: 2, // ChannelTypeGroup
+			FromUID:     testutil.UID,
+		},
+	})
+}
+
+// archiveThread 归档子区
+func archiveThread(t *testing.T, s *server.Server, groupNo, shortID string) {
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest("POST", fmt.Sprintf("/v1/groups/%s/threads/%s/archive", groupNo, shortID), nil)
+	req.Header.Set("token", testutil.Token)
+	s.GetRoute().ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}

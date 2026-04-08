@@ -3,6 +3,7 @@ package thread
 import (
 	"errors"
 
+	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp"
@@ -21,12 +22,58 @@ type Thread struct {
 
 // New 创建 Thread API 处理器
 func New(ctx *config.Context) *Thread {
-	return &Thread{
+	t := &Thread{
 		ctx:          ctx,
 		db:           NewDB(ctx),
 		service:      NewService(ctx),
 		groupService: group.NewService(ctx),
 		Log:          log.NewTLog("Thread"),
+	}
+
+	// 注册消息监听器：归档子区收到消息后自动解档
+	ctx.AddMessagesListener(t.onMessages)
+
+	return t
+}
+
+// onMessages 消息监听器
+func (t *Thread) onMessages(messages []*config.MessageResp) {
+	for _, msg := range messages {
+		// 只处理子区频道类型
+		if msg.ChannelType != common.ChannelTypeCommunityTopic.Uint8() {
+			continue
+		}
+
+		groupNo, shortID, err := ParseChannelID(msg.ChannelID)
+		if err != nil {
+			continue
+		}
+
+		thread, err := t.db.QueryByGroupNoAndShortID(groupNo, shortID)
+		if err != nil || thread == nil {
+			continue
+		}
+
+		// 归档状态收到消息，自动解档
+		if thread.Status == ThreadStatusArchived {
+			version, err := t.ctx.GenSeq(ThreadSeqKey)
+			if err != nil {
+				t.Error("生成版本号失败", zap.Error(err))
+				continue
+			}
+			if err := t.db.UpdateStatus(shortID, ThreadStatusActive, version); err != nil {
+				t.Error("自动解档失败", zap.Error(err), zap.String("shortID", shortID))
+			} else {
+				t.Info("归档子区收到消息，自动解档", zap.String("shortID", shortID))
+			}
+		}
+
+		// 发送者不是子区成员，自动加入
+		if msg.FromUID != "" {
+			if err := t.service.JoinThread(groupNo, shortID, msg.FromUID); err != nil {
+				t.Error("自动加入子区失败", zap.Error(err), zap.String("uid", msg.FromUID))
+			}
+		}
 	}
 }
 

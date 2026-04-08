@@ -78,6 +78,7 @@ type CreateThreadReq struct {
 type ThreadResp struct {
 	ShortID         string `json:"short_id"`
 	GroupNo         string `json:"group_no"`
+	GroupName       string `json:"group_name"`
 	ChannelID       string `json:"channel_id"`
 	ChannelType     uint8  `json:"channel_type"`
 	Name            string `json:"name"`
@@ -232,11 +233,18 @@ func (s *Service) GetThreads(groupNo string) ([]*ThreadResp, error) {
 	}
 	memberCounts, _ := s.db.CountMembersBatch(threadIDs)
 
+	// 查询群名称
+	var groupName string
+	if groupInfo, err := s.groupService.GetGroupWithGroupNo(groupNo); err == nil && groupInfo != nil {
+		groupName = groupInfo.Name
+	}
+
 	results := make([]*ThreadResp, 0, len(threads))
 	for _, t := range threads {
 		resp := &ThreadResp{
 			ShortID:         t.ShortID,
 			GroupNo:         t.GroupNo,
+			GroupName:       groupName,
 			ChannelID:       BuildChannelID(t.GroupNo, t.ShortID),
 			ChannelType:     common.ChannelTypeCommunityTopic.Uint8(),
 			Name:            t.Name,
@@ -264,7 +272,11 @@ func (s *Service) GetThread(groupNo, shortID string) (*ThreadResp, error) {
 	if thread.Status == ThreadStatusDeleted {
 		return nil, errors.New("thread has been deleted")
 	}
-	return s.toThreadResp(thread), nil
+	resp := s.toThreadResp(thread)
+	if groupInfo, err := s.groupService.GetGroupWithGroupNo(groupNo); err == nil && groupInfo != nil {
+		resp.GroupName = groupInfo.Name
+	}
+	return resp, nil
 }
 
 // ArchiveThread 归档子区

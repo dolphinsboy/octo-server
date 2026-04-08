@@ -185,7 +185,8 @@ Content-Type: application/json
 ```
 1. WuKongIM 调用 IMDatasource.Subscribers
 2. 返回父群所有成员 → 允许发送
-3. (待实现) webhook 回调 → 自动加入 thread_member
+3. 消息监听器 onMessages → 自动加入 thread_member
+4. 如果子区已归档 → 自动解档为活跃状态
 ```
 
 ### 接收消息
@@ -214,7 +215,7 @@ Content-Type: application/json
 | 子区列表 | ✅ | ✅ | 完成 |
 | 删除/归档 | ✅ | ✅ | 完成 |
 | **成员模型** |
-| 发消息自动加入 | ✅ | ❌ | 需 webhook |
+| 发消息自动加入 | ✅ | ✅ | 完成 |
 | 主动加入/离开 | ✅ | ✅ | 完成 |
 | 成员列表 | ✅ `/thread-members` | ✅ `/members` | 完成 |
 | 成员计数 | ✅ | ✅ | 完成 |
@@ -228,7 +229,7 @@ Content-Type: application/json
 | 历史消息可见 | ✅ 所有父群成员 | ✅ | 完成 |
 | **生命周期** |
 | 自动归档 | ✅ 1h/24h/3d/7d 四档 | ❌ | 未实现 |
-| 自动锁定 | ✅ 归档后禁止回复 | ⚠️ ban=1 禁止发送 | 部分实现 |
+| 自动锁定 | ✅ 归档后禁止回复 | ⚠️ 归档后可发消息，自动解档 | 不同机制 |
 | 自动隐藏已归档子区 | ✅ | ❌ | 未实现 |
 | **高级特性** |
 | 慢速模式 | ✅ `rate_limit_per_user` | ❌ | 未实现 |
@@ -249,12 +250,12 @@ Content-Type: application/json
 
 3. **实时事件** — Discord 通过 Gateway 推送 `threadCreate`/`threadUpdate`/`threadMembersUpdate` 等事件，DMWork 当前通过父群消息通知 + 客户端轮询
 
-4. **发消息自动加入** — Discord 原生支持发送消息自动加入 thread members，DMWork 需要通过 WuKongIM webhook 实现
+4. **发消息自动加入** — Discord 原生支持发送消息自动加入 thread members，DMWork 通过消息监听器实现（PR #881）
 
 ### 优先级建议
 
 **P0 - 核心体验**
-1. 发消息自动加入 thread_member（通过 WuKongIM webhook）
+1. ~~发消息自动加入 thread_member~~ ✅ PR #881
 2. 前端渲染子区入口消息（type=1100）
 
 **P1 - 重要功能**
