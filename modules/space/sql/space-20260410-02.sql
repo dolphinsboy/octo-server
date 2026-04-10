@@ -10,6 +10,6 @@ CREATE TABLE IF NOT EXISTS `space_join_apply` (
   `created_at`   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`   TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_space_uid_pending` (`space_id`, `uid`, `status`),
+  UNIQUE KEY `uk_space_uid` (`space_id`, `uid`),
   KEY `idx_space_status` (`space_id`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Space加入申请记录';

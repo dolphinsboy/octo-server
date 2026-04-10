@@ -939,11 +939,11 @@ func TestJoinApplies_ListPending(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	err = f.db.insertJoinApply(&spaceJoinApplyModel{
+	err = f.db.upsertJoinApply(&spaceJoinApplyModel{
 		SpaceId: spaceId, UID: "applicant-1", InviteCode: "inv1", Status: 0,
 	})
 	assert.NoError(t, err)
-	err = f.db.insertJoinApply(&spaceJoinApplyModel{
+	err = f.db.upsertJoinApply(&spaceJoinApplyModel{
 		SpaceId: spaceId, UID: "applicant-2", InviteCode: "inv2", Remark: "请让我加入", Status: 0,
 	})
 	assert.NoError(t, err)
@@ -999,7 +999,7 @@ func TestApproveJoinApply_Success(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	err = f.db.insertJoinApply(&spaceJoinApplyModel{
+	err = f.db.upsertJoinApply(&spaceJoinApplyModel{
 		SpaceId: spaceId, UID: applicantUID, InviteCode: "apprinv1", Status: 0,
 	})
 	assert.NoError(t, err)
@@ -1043,7 +1043,7 @@ func TestRejectJoinApply_Success(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	err = f.db.insertJoinApply(&spaceJoinApplyModel{
+	err = f.db.upsertJoinApply(&spaceJoinApplyModel{
 		SpaceId: spaceId, UID: applicantUID, InviteCode: "rejinv1", Status: 0,
 	})
 	assert.NoError(t, err)
@@ -1085,7 +1085,7 @@ func TestApproveJoinApply_SpaceFull(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	err = f.db.insertJoinApply(&spaceJoinApplyModel{
+	err = f.db.upsertJoinApply(&spaceJoinApplyModel{
 		SpaceId: spaceId, UID: applicantUID, InviteCode: "fullinv1", Status: 0,
 	})
 	assert.NoError(t, err)

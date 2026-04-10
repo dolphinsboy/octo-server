@@ -444,11 +444,12 @@ func (d *DB) queryAdminsAndOwner(spaceId string) ([]*MemberModel, error) {
 
 // ---------- Join Apply CRUD ----------
 
-func (d *DB) insertJoinApply(m *spaceJoinApplyModel) error {
-	_, err := d.session.InsertInto("space_join_apply").
-		Columns("space_id", "uid", "invite_code", "remark", "status", "reviewer_uid").
-		Values(m.SpaceId, m.UID, m.InviteCode, m.Remark, m.Status, m.ReviewerUID).
-		Exec()
+func (d *DB) upsertJoinApply(m *spaceJoinApplyModel) error {
+	_, err := d.session.InsertBySql(
+		"INSERT INTO space_join_apply (space_id, uid, invite_code, remark, status, reviewer_uid) VALUES (?, ?, ?, ?, 0, '') "+
+			"ON DUPLICATE KEY UPDATE status=0, invite_code=VALUES(invite_code), remark=VALUES(remark), reviewer_uid='', updated_at=NOW()",
+		m.SpaceId, m.UID, m.InviteCode, m.Remark,
+	).Exec()
 	return err
 }
 
@@ -493,11 +494,14 @@ func (d *DB) queryPendingApplyCountBySpace(spaceId string) (int64, error) {
 	return count, err
 }
 
-func (d *DB) updateJoinApplyStatus(id int64, status int, reviewerUID string) error {
-	_, err := d.session.Update("space_join_apply").
+func (d *DB) updateJoinApplyStatus(id int64, status int, reviewerUID string) (int64, error) {
+	result, err := d.session.Update("space_join_apply").
 		Set("status", status).
 		Set("reviewer_uid", reviewerUID).
 		Set("updated_at", time.Now()).
 		Where("id=? AND status=0", id).Exec()
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

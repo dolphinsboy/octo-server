@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/base/event"
@@ -684,6 +683,12 @@ func (s *Space) joinSpace(c *wkhttp.Context) {
 			return
 		}
 
+		// 只读校验邀请码次数（不消耗，审批通过时也跳过）
+		if invitation.MaxUses > 0 && invitation.UsedCount >= invitation.MaxUses {
+			c.ResponseError(errors.New("邀请码已达到使用次数上限"))
+			return
+		}
+
 		// 检查是否已是成员
 		existing, err := s.db.queryMemberIncludeRemoved(invitation.SpaceId, loginUID)
 		if err != nil {
@@ -710,24 +715,14 @@ func (s *Space) joinSpace(c *wkhttp.Context) {
 			return
 		}
 
-		// 创建申请记录（不消耗邀请码次数，审批通过时也跳过校验）
-		err = s.db.insertJoinApply(&spaceJoinApplyModel{
+		// 创建或重置申请记录（被拒后重新申请时覆盖更新）
+		err = s.db.upsertJoinApply(&spaceJoinApplyModel{
 			SpaceId:    invitation.SpaceId,
 			UID:        loginUID,
 			InviteCode: req.InviteCode,
 			Remark:     req.Remark,
-			Status:     0,
 		})
 		if err != nil {
-			// 并发场景：唯一索引冲突视为重复申请
-			if strings.Contains(err.Error(), "Duplicate") {
-				c.Response(map[string]interface{}{
-					"status":   "pending",
-					"space_id": invitation.SpaceId,
-					"msg":      "申请已提交，请等待审批",
-				})
-				return
-			}
 			c.ResponseError(errors.New("提交申请失败"))
 			return
 		}
@@ -1132,7 +1127,7 @@ func (s *Space) approveJoinApply(c *wkhttp.Context) {
 		}
 		if errors.Is(joinErr, ErrAlreadyMember) {
 			// 用户已通过其他方式加入，直接标记申请为通过
-			if err := s.db.updateJoinApplyStatus(applyID, 1, loginUID); err != nil {
+			if _, err := s.db.updateJoinApplyStatus(applyID, 1, loginUID); err != nil {
 				s.Error("更新申请状态失败（已是成员）", zap.Error(err))
 			}
 			c.ResponseOK()
@@ -1142,9 +1137,14 @@ func (s *Space) approveJoinApply(c *wkhttp.Context) {
 		return
 	}
 
-	err = s.db.updateJoinApplyStatus(applyID, 1, loginUID)
+	affected, err := s.db.updateJoinApplyStatus(applyID, 1, loginUID)
 	if err != nil {
 		c.ResponseError(errors.New("更新申请状态失败"))
+		return
+	}
+	if affected == 0 {
+		// 已被其他管理员处理，用户实际已加入，返回成功
+		c.ResponseOK()
 		return
 	}
 
@@ -1193,7 +1193,7 @@ func (s *Space) rejectJoinApply(c *wkhttp.Context) {
 		return
 	}
 
-	err = s.db.updateJoinApplyStatus(applyID, 2, loginUID)
+	_, err = s.db.updateJoinApplyStatus(applyID, 2, loginUID)
 	if err != nil {
 		c.ResponseError(errors.New("更新申请状态失败"))
 		return
