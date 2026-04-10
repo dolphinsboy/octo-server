@@ -20,3 +20,4 @@ DROP PROCEDURE IF EXISTS fix_robot_username;
 
 -- +migrate Down
 -- 不可逆操作：已清空的 username 无法还原（原始值未保留）。
+-- 如需回滚，需从备份恢复。
