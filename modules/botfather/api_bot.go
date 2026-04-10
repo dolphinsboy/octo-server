@@ -172,13 +172,15 @@ func (bf *BotFather) getGroupMembers(c *wkhttp.Context) {
 		Role      int    `db:"role" json:"role"`
 		Robot     int    `db:"robot" json:"robot"`
 		CreatedAt string `db:"created_at" json:"created_at"`
+		OwnerUID  string `db:"owner_uid" json:"owner_uid,omitempty"`
 	}
 
 	var members []member
 	_, err = bf.db.session.SelectBySql(`
-		SELECT gm.uid, IFNULL(u.name,'') name, gm.role, IFNULL(u.robot,0) robot, gm.created_at 
+		SELECT gm.uid, IFNULL(u.name,'') name, gm.role, IFNULL(u.robot,0) robot, gm.created_at, IFNULL(r.creator_uid,'') AS owner_uid
 		FROM group_member gm 
 		LEFT JOIN user u ON gm.uid = u.uid 
+		LEFT JOIN robot r ON gm.uid = r.robot_id AND r.status=1
 		WHERE gm.group_no = ? AND gm.is_deleted = 0
 		ORDER BY gm.role DESC, gm.created_at ASC
 	`, groupNo).Load(&members)
