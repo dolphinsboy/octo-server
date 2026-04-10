@@ -20,7 +20,7 @@ import (
 func (bf *BotFather) syncMessages(c *wkhttp.Context) {
 	var req BotSyncMessagesReq
 	if err := c.BindJSON(&req); err != nil {
-		c.ResponseError(errors.New("数据格式有误"))
+		c.ResponseError(errors.New("invalid request body"))
 		return
 	}
 	if strings.TrimSpace(req.ChannelID) == "" {
@@ -48,8 +48,8 @@ func (bf *BotFather) syncMessages(c *wkhttp.Context) {
 			req.ChannelID, robotID,
 		).Load(&count)
 		if err != nil {
-			bf.Error("查询群成员失败", zap.Error(err))
-			c.ResponseError(errors.New("查询群成员失败"))
+			bf.Error("failed to query group members", zap.Error(err))
+			c.ResponseError(errors.New("failed to query group members"))
 			return
 		}
 		if count == 0 {
@@ -305,6 +305,296 @@ func (bf *BotFather) updateGroupMd(c *wkhttp.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"version": newVersion,
 	})
+}
+
+// resolveBotDisplayName 查询 Bot 的显示名，查不到时 fallback 到 robotID
+func (bf *BotFather) resolveBotDisplayName(robotID string) string {
+	botUser, err := bf.userDB.QueryByUID(robotID)
+	if err == nil && botUser != nil && botUser.Name != "" {
+		return botUser.Name
+	}
+	return robotID
+}
+
+// ========== Space Members API ==========
+
+// botSpaceMembers 查询 Bot 所在 Space 的成员列表，支持按名称搜索
+// GET /v1/bot/space/members?keyword=xxx&space_id=xxx&limit=50
+func (bf *BotFather) botSpaceMembers(c *wkhttp.Context) {
+	robotID := getRobotIDFromContext(c)
+	if robotID == "" {
+		c.ResponseError(errors.New("robot_id not found"))
+		return
+	}
+
+	keyword := strings.TrimSpace(c.Query("keyword"))
+	spaceID := strings.TrimSpace(c.Query("space_id"))
+	limitStr := c.Query("limit")
+	limit := 50
+	if l, err := fmt.Sscanf(limitStr, "%d", &limit); err != nil || l == 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	type MemberInfo struct {
+		UID   string `json:"uid"`
+		Name  string `json:"name"`
+		Robot int    `json:"robot"`
+	}
+
+	var members []MemberInfo
+	var err error
+
+	if spaceID == "" {
+		// 查找 bot 所在的所有 Space
+		var spaceIDs []string
+		_, err = bf.ctx.DB().SelectBySql(
+			"SELECT space_id FROM space_member WHERE uid=? AND status=1", robotID,
+		).Load(&spaceIDs)
+		if err != nil || len(spaceIDs) == 0 {
+			c.JSON(http.StatusOK, []MemberInfo{})
+			return
+		}
+		spaceID = spaceIDs[0]
+	} else {
+		// 校验 bot 是否属于该 Space
+		var count int
+		bf.ctx.DB().SelectBySql(
+			"SELECT COUNT(*) FROM space_member WHERE space_id=? AND uid=? AND status=1", spaceID, robotID,
+		).LoadOne(&count)
+		if count == 0 {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"msg": "bot is not a member of this space"})
+			return
+		}
+	}
+
+	if keyword != "" {
+		_, err = bf.ctx.DB().SelectBySql(
+			"SELECT sm.uid, IFNULL(u.name,'') as name, IFNULL(u.robot,0) as robot FROM space_member sm LEFT JOIN user u ON sm.uid=u.uid WHERE sm.space_id=? AND sm.status=1 AND u.name LIKE ? LIMIT ?",
+			spaceID, "%"+keyword+"%", limit,
+		).Load(&members)
+	} else {
+		_, err = bf.ctx.DB().SelectBySql(
+			"SELECT sm.uid, IFNULL(u.name,'') as name, IFNULL(u.robot,0) as robot FROM space_member sm LEFT JOIN user u ON sm.uid=u.uid WHERE sm.space_id=? AND sm.status=1 LIMIT ?",
+			spaceID, limit,
+		).Load(&members)
+	}
+	if err != nil {
+		bf.Error("query space members failed", zap.Error(err))
+		c.ResponseError(errors.New("failed to query space members"))
+		return
+	}
+
+	c.JSON(http.StatusOK, members)
+}
+
+// ========== Bot Group Management APIs ==========
+
+// botGroupCreate 创建群 (POST /v1/bot/groups/create)
+func (bf *BotFather) botGroupCreate(c *wkhttp.Context) {
+	robotID := getRobotIDFromContext(c)
+	if robotID == "" {
+		c.ResponseError(errors.New("robot_id not found"))
+		return
+	}
+
+	var req struct {
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+		Creator string   `json:"creator"`
+		SpaceID string   `json:"space_id"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.ResponseError(errors.New("invalid request body"))
+		return
+	}
+	if len(req.Members) == 0 {
+		c.ResponseError(errors.New("members is required"))
+		return
+	}
+	// creator 可选，不传则默认 members[0] 为群主
+	if req.Creator == "" {
+		req.Creator = req.Members[0]
+	}
+
+	// 如果没传 space_id，自动使用 Bot 所在的第一个 Space
+	if req.SpaceID == "" {
+		var spaceIDs []string
+		bf.ctx.DB().SelectBySql(
+			"SELECT space_id FROM space_member WHERE uid=? AND status=1 LIMIT 1", robotID,
+		).Load(&spaceIDs)
+		if len(spaceIDs) > 0 {
+			req.SpaceID = spaceIDs[0]
+		}
+	}
+
+	// 调用 Service 创建群
+	createResp, err := bf.groupService.CreateGroup(&group.CreateGroupServiceReq{
+		Creator: req.Creator,
+		Members: req.Members,
+		Name:    req.Name,
+		SpaceID: req.SpaceID,
+		BotUID:  robotID,
+	})
+	if err != nil {
+		bf.Error("create group failed", zap.Error(err))
+		c.ResponseError(err)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"group_no": createResp.GroupNo,
+		"name":     createResp.Name,
+	}
+	if len(createResp.SkippedMembers) > 0 {
+		resp["skipped_members"] = createResp.SkippedMembers
+	}
+	c.Response(resp)
+}
+
+// botGroupUpdate 编辑群信息 (PUT /v1/bot/groups/:group_no)
+func (bf *BotFather) botGroupUpdate(c *wkhttp.Context) {
+	robotID := getRobotIDFromContext(c)
+	groupNo := c.Param("group_no")
+	botName := bf.resolveBotDisplayName(robotID)
+
+	// 权限检查：Bot 必须是群成员
+	isMember, err := bf.groupService.ExistMember(groupNo, robotID)
+	if err != nil || !isMember {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"msg": "bot is not a member of this group"})
+		return
+	}
+
+	// 权限检查：Bot 必须是 bot_admin
+	isBotAdmin, err := bf.groupService.IsBotAdmin(groupNo, robotID)
+	if err != nil || !isBotAdmin {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"msg": "bot is not a bot_admin in this group"})
+		return
+	}
+
+	var req struct {
+		Name   *string `json:"name"`
+		Notice *string `json:"notice"`
+	}
+	if err := c.BindJSON(&req); err != nil {
+		c.ResponseError(errors.New("invalid request body"))
+		return
+	}
+	if req.Name == nil && req.Notice == nil {
+		c.ResponseError(errors.New("at least one of name or notice is required"))
+		return
+	}
+
+	// 调用 Service 更新群信息
+	err = bf.groupService.UpdateGroupInfo(&group.UpdateGroupInfoServiceReq{
+		GroupNo:      groupNo,
+		OperatorUID:  robotID,
+		OperatorName: botName,
+		Name:         req.Name,
+		Notice:       req.Notice,
+	})
+	if err != nil {
+		bf.Error("update group failed", zap.Error(err))
+		c.ResponseError(err)
+		return
+	}
+
+	c.Response(map[string]interface{}{"ok": true})
+}
+
+// botGroupMemberAdd 添加群成员 (POST /v1/bot/groups/:group_no/members/add)
+func (bf *BotFather) botGroupMemberAdd(c *wkhttp.Context) {
+	robotID := getRobotIDFromContext(c)
+	groupNo := c.Param("group_no")
+	botName := bf.resolveBotDisplayName(robotID)
+
+	// 权限检查：Bot 必须是群成员
+	isMember, err := bf.groupService.ExistMember(groupNo, robotID)
+	if err != nil || !isMember {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"msg": "bot is not a member of this group"})
+		return
+	}
+
+	var req struct {
+		Members []string `json:"members"`
+	}
+	if err := c.BindJSON(&req); err != nil || len(req.Members) == 0 {
+		c.ResponseError(errors.New("members is required"))
+		return
+	}
+
+	// 调用 Service 添加群成员
+	addResp, err := bf.groupService.AddGroupMembers(&group.AddGroupMembersServiceReq{
+		GroupNo:      groupNo,
+		Members:      req.Members,
+		OperatorUID:  robotID,
+		OperatorName: botName,
+	})
+	if err != nil {
+		bf.Error("add group members failed", zap.Error(err))
+		c.ResponseError(err)
+		return
+	}
+
+	c.Response(map[string]interface{}{"ok": true, "added": addResp.Added})
+}
+
+// botGroupMemberRemove 移除群成员 (POST /v1/bot/groups/:group_no/members/remove)
+func (bf *BotFather) botGroupMemberRemove(c *wkhttp.Context) {
+	robotID := getRobotIDFromContext(c)
+	groupNo := c.Param("group_no")
+	botName := bf.resolveBotDisplayName(robotID)
+
+	// 权限检查：Bot 必须是群成员
+	isMember, err := bf.groupService.ExistMember(groupNo, robotID)
+	if err != nil || !isMember {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"msg": "bot is not a member of this group"})
+		return
+	}
+
+	// 权限检查：Bot 必须是 bot_admin
+	isBotAdmin, err := bf.groupService.IsBotAdmin(groupNo, robotID)
+	if err != nil || !isBotAdmin {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"msg": "bot is not a bot_admin in this group"})
+		return
+	}
+
+	var req struct {
+		Members []string `json:"members"`
+	}
+	if err := c.BindJSON(&req); err != nil || len(req.Members) == 0 {
+		c.ResponseError(errors.New("members is required"))
+		return
+	}
+
+	// Bot 不能移除自己
+	filteredMembers := make([]string, 0, len(req.Members))
+	for _, uid := range req.Members {
+		if uid != robotID {
+			filteredMembers = append(filteredMembers, uid)
+		}
+	}
+	if len(filteredMembers) == 0 {
+		c.Response(map[string]interface{}{"ok": true, "removed": 0})
+		return
+	}
+
+	// 调用 Service 移除群成员
+	removeResp, err := bf.groupService.RemoveGroupMembers(&group.RemoveGroupMembersServiceReq{
+		GroupNo:      groupNo,
+		Members:      filteredMembers,
+		OperatorUID:  robotID,
+		OperatorName: botName,
+	})
+	if err != nil {
+		bf.Error("remove group members failed", zap.Error(err))
+		c.ResponseError(err)
+		return
+	}
+
+	c.Response(map[string]interface{}{"ok": true, "removed": removeResp.Removed})
 }
 
 // sendGroupMdNotification sends GROUP.md event notification from bot

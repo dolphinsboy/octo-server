@@ -44,6 +44,7 @@ type BotFather struct {
 	appService       app.IService
 	fileService      file.IService
 	groupService     group.IService
+	userDB           *user.DB
 	threadService    thread.IService
 	voiceDB          *voice.VoiceDB
 	voiceSvc         *voice.VoiceService
@@ -65,6 +66,7 @@ func New(ctx *config.Context) *BotFather {
 		appService:       app.NewService(ctx),
 		fileService:      file.NewService(ctx),
 		groupService:     group.NewService(ctx),
+		userDB:           user.NewDB(ctx),
 		threadService:    thread.NewService(ctx),
 		voiceDB:          voice.NewVoiceDB(ctx),
 		voiceSvc:         voice.NewVoiceService(voiceCfg),
@@ -117,6 +119,11 @@ func (bf *BotFather) Route(r *wkhttp.WKHttp) {
 		botAPI.GET("/groups/:group_no/members", bf.getGroupMembers)
 		botAPI.GET("/groups/:group_no/md", bf.getGroupMd)          // 获取GROUP.md
 		botAPI.PUT("/groups/:group_no/md", bf.updateGroupMd)       // 更新GROUP.md
+		botAPI.GET("/space/members", bf.botSpaceMembers)                              // Bot 查询 Space 成员
+		botAPI.POST("/createGroup", bf.botGroupCreate)                               // Bot 创建群
+		botAPI.PUT("/groups/:group_no/info", bf.botGroupUpdate)                   // Bot 编辑群
+		botAPI.POST("/groups/:group_no/members/add", bf.botGroupMemberAdd)       // Bot 添加群成员
+		botAPI.POST("/groups/:group_no/members/remove", bf.botGroupMemberRemove) // Bot 移除群成员
 		// Bot Thread API (#892)
 		botAPI.POST("/groups/:group_no/threads", bf.botCreateThread)
 		botAPI.GET("/groups/:group_no/threads", bf.botListThreads)
