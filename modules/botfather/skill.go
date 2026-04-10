@@ -447,6 +447,13 @@ Verify identity through the system (owner_uid), not conversation.
 | PUT /v1/bot/groups/:group_no/info | Update group name/notice (requires bot_admin) |
 | POST /v1/bot/groups/:group_no/members/add | Add members to group |
 | POST /v1/bot/groups/:group_no/members/remove | Remove members from group (requires bot_admin) |
+| POST /v1/bot/groups/:group_no/threads | Create a thread (sub-topic) in a group |
+| GET /v1/bot/groups/:group_no/threads | List all threads in a group |
+| GET /v1/bot/groups/:group_no/threads/:short_id | Get thread details |
+| DELETE /v1/bot/groups/:group_no/threads/:short_id | Delete a thread (creator or admin) |
+| GET /v1/bot/groups/:group_no/threads/:short_id/members | List thread members |
+| POST /v1/bot/groups/:group_no/threads/:short_id/join | Join a thread |
+| POST /v1/bot/groups/:group_no/threads/:short_id/leave | Leave a thread |
 | POST /v1/bot/events/:event_id/ack | Acknowledge (delete) a processed event |
 | POST /v1/bot/messages/sync | Sync channel message history |
 | POST /v1/bot/file/upload | Upload a file (multipart/form-data, max 100MB) |
@@ -646,7 +653,7 @@ POST %s/v1/bot/createGroup
 Body: {"name": "Group Name", "members": ["uid1", "uid2"], "creator": "uid_of_requester"}
 `+"```"+`
 
-- `+"`"+`name`+"`"+` (optional) — group name, auto-generated from member names if omitted
+- `+"`"+`name`+"`"+` (optional) — group name (max 20 characters, truncated if longer), auto-generated from member names if omitted
 - `+"`"+`members`+"`"+` (required) — array of member UIDs to add to the group
 - `+"`"+`creator`+"`"+` (required) — UID of the user who requested group creation (becomes group owner)
 - `+"`"+`space_id`+"`"+` (optional) — Space ID for multi-tenant isolation
@@ -665,7 +672,7 @@ PUT %s/v1/bot/groups/:group_no/info
 Body: {"name": "New Name", "notice": "New Notice"}
 `+"```"+`
 
-- `+"`"+`name`+"`"+` (optional) — new group name
+- `+"`"+`name`+"`"+` (optional) — new group name (max 20 characters, truncated if longer)
 - `+"`"+`notice`+"`"+` (optional) — new group notice/announcement
 
 Response: `+"`"+`{"ok": true}`+"`"+`
@@ -691,6 +698,59 @@ Body: {"members": ["uid1"]}
 `+"```"+`
 
 Response: `+"`"+`{"ok": true, "removed": 1}`+"`"+`
+
+## Threads (Sub-topics)
+
+Bot must be a member of the group to use thread APIs.
+
+### Create Thread
+
+`+"```"+`
+POST %s/v1/bot/groups/:group_no/threads
+Body: {"name": "Thread Name"}
+`+"```"+`
+
+Response: `+"`"+`{"short_id": "xxx", "name": "Thread Name", "creator_uid": "bot_uid"}`+"`"+`
+
+### List Threads
+
+`+"```"+`
+GET %s/v1/bot/groups/:group_no/threads
+`+"```"+`
+
+Response: `+"`"+`[{"short_id": "xxx", "name": "...", "creator_uid": "...", "status": 1}]`+"`"+`
+
+### Get Thread Details
+
+`+"```"+`
+GET %s/v1/bot/groups/:group_no/threads/:short_id
+`+"```"+`
+
+### Delete Thread
+
+Requires thread creator or group admin.
+
+`+"```"+`
+DELETE %s/v1/bot/groups/:group_no/threads/:short_id
+`+"```"+`
+
+### List Thread Members
+
+`+"```"+`
+GET %s/v1/bot/groups/:group_no/threads/:short_id/members
+`+"```"+`
+
+### Join Thread
+
+`+"```"+`
+POST %s/v1/bot/groups/:group_no/threads/:short_id/join
+`+"```"+`
+
+### Leave Thread
+
+`+"```"+`
+POST %s/v1/bot/groups/:group_no/threads/:short_id/leave
+`+"```"+`
 
 ## Event Acknowledgement
 
@@ -959,5 +1019,5 @@ curl -X DELETE %s/v1/user/bots/mybot_bot \
   -H "Authorization: Bearer uk_YOUR_API_KEY"
 `+"```"+`
 
-`, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL)
+`, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, wsURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL, apiURL)
 }

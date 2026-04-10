@@ -687,8 +687,9 @@ type CreateGroupServiceReq struct {
 
 // CreateGroupServiceResp 创建群响应
 type CreateGroupServiceResp struct {
-	GroupNo string // 群编号
-	Name    string // 群名称
+	GroupNo        string   // 群编号
+	Name           string   // 群名称
+	SkippedMembers []string // 因不在 Space 而被过滤的成员 UID
 }
 
 // AddGroupMembersServiceReq 添加群成员请求
@@ -738,8 +739,21 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 		return nil, errors.New("members is required")
 	}
 
+	var skippedMembers []string
+
 	// Space 校验
 	if req.SpaceID != "" {
+		// 校验 Bot 是否属于目标 Space
+		if req.BotUID != "" {
+			botOk, err := spacepkg.CheckMembership(s.ctx.DB(), req.SpaceID, req.BotUID)
+			if err != nil {
+				s.Error("check bot space membership failed", zap.Error(err))
+				return nil, errors.New("failed to check space membership")
+			}
+			if !botOk {
+				return nil, errors.New("bot is not a member of this space")
+			}
+		}
 		creatorOk, err := spacepkg.CheckMembership(s.ctx.DB(), req.SpaceID, req.Creator)
 		if err != nil {
 			s.Error("check creator space membership failed", zap.Error(err))
@@ -749,6 +763,7 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 			return nil, errors.New("creator is not a member of this space")
 		}
 		validMembers := make([]string, 0, len(req.Members))
+		skippedMembers := make([]string, 0)
 		for _, uid := range req.Members {
 			ok, err := spacepkg.CheckMembership(s.ctx.DB(), req.SpaceID, uid)
 			if err != nil {
@@ -757,6 +772,8 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 			}
 			if ok {
 				validMembers = append(validMembers, uid)
+			} else {
+				skippedMembers = append(skippedMembers, uid)
 			}
 		}
 		if len(validMembers) == 0 {
@@ -943,8 +960,9 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 	})
 
 	return &CreateGroupServiceResp{
-		GroupNo: groupNo,
-		Name:    groupName,
+		GroupNo:        groupNo,
+		Name:           groupName,
+		SkippedMembers: skippedMembers,
 	}, nil
 }
 

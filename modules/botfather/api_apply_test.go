@@ -33,10 +33,10 @@ func setupTestBotFather(t *testing.T) (*server.Server, *BotFather) {
 func createTestRobot(t *testing.T, bf *BotFather, robotID, creatorUID string, accessMode int) {
 	_, err := bf.db.session.InsertInto("robot").Columns(
 		"app_id", "robot_id", "username", "token", "version", "status",
-		"creator_uid", "description", "bot_token", "im_token_cache", "bot_commands", "access_mode",
+		"creator_uid", "description", "bot_token", "im_token_cache", "bot_commands",
 	).Values(
 		robotID, robotID, robotID, "test_token", 1, 1,
-		creatorUID, "test robot", "bf_"+robotID, "", "[]", accessMode,
+		creatorUID, "test robot", "bf_"+robotID, "", "[]",
 	).Exec()
 	assert.NoError(t, err)
 }

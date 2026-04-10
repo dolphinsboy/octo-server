@@ -436,14 +436,18 @@ func (bf *BotFather) botGroupCreate(c *wkhttp.Context) {
 	})
 	if err != nil {
 		bf.Error("create group failed", zap.Error(err))
-		c.ResponseError(errors.New("failed to create group"))
+		c.ResponseError(err)
 		return
 	}
 
-	c.Response(map[string]interface{}{
+	resp := map[string]interface{}{
 		"group_no": createResp.GroupNo,
 		"name":     createResp.Name,
-	})
+	}
+	if len(createResp.SkippedMembers) > 0 {
+		resp["skipped_members"] = createResp.SkippedMembers
+	}
+	c.Response(resp)
 }
 
 // botGroupUpdate 编辑群信息 (PUT /v1/bot/groups/:group_no)
@@ -489,7 +493,7 @@ func (bf *BotFather) botGroupUpdate(c *wkhttp.Context) {
 	})
 	if err != nil {
 		bf.Error("update group failed", zap.Error(err))
-		c.ResponseError(errors.New("failed to update group"))
+		c.ResponseError(err)
 		return
 	}
 
@@ -526,7 +530,7 @@ func (bf *BotFather) botGroupMemberAdd(c *wkhttp.Context) {
 	})
 	if err != nil {
 		bf.Error("add group members failed", zap.Error(err))
-		c.ResponseError(errors.New("failed to add members"))
+		c.ResponseError(err)
 		return
 	}
 
@@ -582,7 +586,7 @@ func (bf *BotFather) botGroupMemberRemove(c *wkhttp.Context) {
 	})
 	if err != nil {
 		bf.Error("remove group members failed", zap.Error(err))
-		c.ResponseError(errors.New("failed to remove members"))
+		c.ResponseError(err)
 		return
 	}
 
