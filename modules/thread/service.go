@@ -698,17 +698,6 @@ func (s *Service) JoinThread(groupNo, shortID, uid string) error {
 		return fmt.Errorf("insert member: %w", err)
 	}
 
-	// 同步订阅者到 IM
-	channelID := BuildChannelID(groupNo, shortID)
-	err = s.ctx.IMAddSubscriber(&config.SubscriberAddReq{
-		ChannelID:   channelID,
-		ChannelType: common.ChannelTypeCommunityTopic.Uint8(),
-		Subscribers: []string{uid},
-	})
-	if err != nil {
-		s.Error("添加IM订阅者失败", zap.Error(err), zap.String("uid", uid))
-	}
-
 	return nil
 }
 
@@ -736,17 +725,6 @@ func (s *Service) LeaveThread(groupNo, shortID, uid string) error {
 	err = s.db.DeleteMember(threadID, uid)
 	if err != nil {
 		return fmt.Errorf("delete member: %w", err)
-	}
-
-	// 同步移除 IM 订阅者
-	channelID := BuildChannelID(groupNo, shortID)
-	err = s.ctx.IMRemoveSubscriber(&config.SubscriberRemoveReq{
-		ChannelID:   channelID,
-		ChannelType: common.ChannelTypeCommunityTopic.Uint8(),
-		Subscribers: []string{uid},
-	})
-	if err != nil {
-		s.Error("移除IM订阅者失败", zap.Error(err), zap.String("uid", uid))
 	}
 
 	return nil
