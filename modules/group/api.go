@@ -2377,6 +2377,14 @@ func (g *Group) groupExit(c *wkhttp.Context) {
 			return
 		}
 	}
+	// 生成群头像更新事件
+	groupAvatarEventID, avatarErr := beginAvatarUpdateEvent(g.ctx, g.db, groupNo, nil, []string{loginUID}, tx)
+	if avatarErr != nil {
+		tx.Rollback()
+		g.Error("开启群头像更新事件失败！", zap.Error(avatarErr))
+		c.ResponseError(errors.New("开启群头像更新事件失败！"))
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		tx.RollbackUnlessCommitted()
 		g.Error("提交事务失败！", zap.Error(err))
@@ -2384,6 +2392,9 @@ func (g *Group) groupExit(c *wkhttp.Context) {
 		return
 	}
 	g.ctx.EventCommit(eventID)
+	if groupAvatarEventID != 0 {
+		g.ctx.EventCommit(groupAvatarEventID)
+	}
 	// 移除用户在该群所有子区的成员身份
 	g.removeUserFromGroupThreads(groupNo, loginUID)
 	// 发送群成员更新命令
