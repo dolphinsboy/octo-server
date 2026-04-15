@@ -400,6 +400,7 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 	groupNos := make([]string, 0, len(conversations))
 	uids := make([]string, 0, len(conversations))
 	channelIDs := make([]string, 0, len(conversations))
+	threadShortIDSet := make(map[string]struct{})
 	if len(conversations) > 0 {
 		for _, conversation := range conversations {
 			if len(conversation.Recents) == 0 {
@@ -411,6 +412,11 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 				groupNos = append(groupNos, conversation.ChannelID)
 			}
 			channelIDs = append(channelIDs, conversation.ChannelID)
+			if conversation.ChannelType == common.ChannelTypeCommunityTopic.Uint8() {
+				if _, shortID, err := thread.ParseChannelID(conversation.ChannelID); err == nil {
+					threadShortIDSet[shortID] = struct{}{}
+				}
+			}
 		}
 	}
 
@@ -418,6 +424,7 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 	groupMap := map[string]*group.GroupResp{}                   // 群详情
 	conversationExtraMap := map[string]*conversationExtraResp{} // 最近会话扩展
 	groupVailds := make([]string, 0, len(conversations))        // 有效群
+	activeThreadShortIDs := make(map[string]struct{})            // 有效子区
 
 	// ---------- 是否在群内 ----------
 	if len(groupNos) > 0 {
@@ -428,6 +435,24 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 			return
 		}
 
+	}
+
+	// ---------- 过滤已删除子区 ----------
+	threadFilterEnabled := false
+	if len(threadShortIDSet) > 0 {
+		shortIDs := make([]string, 0, len(threadShortIDSet))
+		for id := range threadShortIDSet {
+			shortIDs = append(shortIDs, id)
+		}
+		activeIDs, err := co.threadDB.QueryNonDeletedShortIDs(shortIDs)
+		if err != nil {
+			co.Error("查询有效子区失败！", zap.Error(err))
+		} else {
+			threadFilterEnabled = true
+			for _, id := range activeIDs {
+				activeThreadShortIDs[id] = struct{}{}
+			}
+		}
 	}
 
 	// ---------- 扩展 ----------
@@ -536,6 +561,17 @@ func (co *Conversation) syncUserConversation(c *wkhttp.Context) {
 					}
 				}
 				if !vaild { // 无效群则跳过
+					continue
+				}
+			}
+
+			if conversation.ChannelType == common.ChannelTypeCommunityTopic.Uint8() && threadFilterEnabled {
+				if _, shortID, err := thread.ParseChannelID(conversation.ChannelID); err == nil {
+					if _, ok := activeThreadShortIDs[shortID]; !ok {
+						continue
+					}
+				} else {
+					co.Warn("解析子区 ChannelID 失败", zap.String("channelID", conversation.ChannelID), zap.Error(err))
 					continue
 				}
 			}
