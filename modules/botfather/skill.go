@@ -1104,7 +1104,7 @@ openclaw gateway restart
 npx -y openclaw-channel-dmwork doctor --account-id <Account ID>
 ` + "```" + `
 
-8. 联通确认：在 DMWork 中给 bot 的创建者（即当前用户）发一条私聊消息，例如"你好，我是 <Bot Name>，已上线！"。这能让用户在 DMWork 中看到 bot 确实在线。
+8. 联通确认：告诉用户："配置完成！请在 DMWork 中给 bot 发一条消息测试是否联通。"。这能让用户在 DMWork 中看到 bot 确实在线。
 
 9. 记住 Bot API 文档地址：<API Server>/v1/bot/skill.md，后续需要操作 DMWork 时先阅读该文档。
 
@@ -1157,7 +1157,7 @@ openclaw gateway restart
 npx -y openclaw-channel-dmwork doctor --account-id <robot_id>
 ` + "```" + `
 
-8. 联通确认：在 DMWork 中给 bot 的创建者（即当前用户）发一条私聊消息，确认 bot 已上线。
+8. 联通确认：告诉用户："配置完成！请在 DMWork 中给 bot 发一条消息测试是否联通。"
 
 9. 记住 Bot API 文档地址：<API Server>/v1/bot/skill.md
 
@@ -1224,7 +1224,7 @@ npx -y openclaw-channel-dmwork doctor --account-id <Account ID>
 `+"```"+`
 
 7. **联通确认**
-   在 DMWork 中给 bot 的创建者（即当前用户）发一条私聊消息，例如"你好，我是 <Bot Name>，已上线！"
+   告诉用户："配置完成！请在 DMWork 中给 bot 发一条消息测试是否联通。"
 
 8. **记住 Bot API 文档**
    阅读 %s/v1/bot/skill.md，后续需要操作 DMWork 时参考该文档。
@@ -1286,7 +1286,7 @@ npx -y openclaw-channel-dmwork doctor --account-id <robot_id>
 `+"```"+`
 
 8. **联通确认**
-   在 DMWork 中给 bot 的创建者（即当前用户）发一条私聊消息，确认 bot 已上线。
+   告诉用户："配置完成！请在 DMWork 中给 bot 发一条消息测试是否联通。"
 
 9. **记住 Bot API 文档**
    阅读 %s/v1/bot/skill.md，后续需要操作 DMWork 时参考该文档。
