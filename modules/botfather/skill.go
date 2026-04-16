@@ -217,6 +217,16 @@ curl -X POST %s/v1/bot/sendMessage \
   }'
 `+"```"+`
 
+### Channel Types
+
+| channel_type | Target | channel_id format |
+|---|---|---|
+| 1 | DM (direct message) | user UID |
+| 2 | Group | group_no |
+| 5 | Thread (sub-topic in group) | {group_no}____{short_id} |
+
+When replying, always use the `+"`"+`channel_id`+"`"+` and `+"`"+`channel_type`+"`"+` from the received event. Do not modify or split the channel_id.
+
 ## Real-time Features
 
 ### Typing Indicator
@@ -305,12 +315,35 @@ DM and group events have different formats. Getting this wrong means replying to
 
 **Reply target:** use `+"`"+`channel_id`+"`"+` and `+"`"+`channel_type`+"`"+` from the event directly.
 
+### Thread Event (channel_type = 5, channel_id contains ____)
+
+Threads (sub-topics) within a group. The `+"`"+`channel_id`+"`"+` format is `+"`"+`{group_no}____{short_id}`+"`"+` (4 underscores).
+
+`+"```"+`json
+{
+  "event_id": 103,
+  "message": {
+    "message_id": 1003,
+    "from_uid": "user_xyz",
+    "channel_id": "group_123____2044043250838278144",
+    "channel_type": 5,
+    "payload": {"type": 1, "content": "@bot check this"},
+    "timestamp": 1700000000
+  }
+}
+`+"```"+`
+
+**Reply target:** use `+"`"+`channel_id`+"`"+` and `+"`"+`channel_type`+"`"+` from the event directly. Do NOT split the channel_id — keep the full `+"`"+`{group_no}____{short_id}`+"`"+` format.
+
 ### Detection Rule
 
 `+"```"+`
-if message.channel_id is missing or empty → DM    → reply to (from_uid, channel_type=1)
-if message.channel_id is present          → Group → reply to (channel_id, channel_type)
+if message.channel_id is missing or empty      → DM     → reply to (from_uid, channel_type=1)
+if message.channel_type == 5 (contains ____)   → Thread → reply to (channel_id, channel_type=5)
+if message.channel_id is present               → Group  → reply to (channel_id, channel_type=2)
 `+"```"+`
+
+**Important:** Always use `+"`"+`channel_type`+"`"+` from the event as-is. Thread messages use `+"`"+`channel_type=5`+"`"+` — do not hardcode `+"`"+`channel_type=2`+"`"+` for all group-like messages.
 
 ## Behavior Rules
 
