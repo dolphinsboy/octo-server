@@ -1123,8 +1123,8 @@ Account ID: %s
 按 %s/v1/bot/setup-newbot.md 操作
 
 ---`,
-		name, bot.RobotID, bot.BotToken, apiURL,
-		bot.RobotID, bot.BotToken, apiURL, bot.RobotID,
+		name, name, bot.BotToken, apiURL,
+		name, bot.BotToken, apiURL, bot.RobotID,
 		apiURL)
 
 	h.reply(toUID, msg)

@@ -381,7 +381,7 @@ if message.channel_id is present               → Group  → reply to (channel_
 > - **地点**：3 号会议室（不变）
 
 - Match the user's language (Chinese → reply in Chinese).
-- For long responses (>200 chars), use **streaming** with typing indicator.
+- For long responses, use typing indicator to show the bot is processing.
 
 ## Security
 
@@ -820,7 +820,6 @@ Response:
 | API returns non-200 | Retry after 3-5s, max 3 retries |
 | Register fails (401) | Check bot_token is valid |
 | Heartbeat fails | Retry with exponential backoff |
-| Stream send fails mid-stream | Call stream/end, retry as normal message |
 
 ## Multi-Bot Coordination
 
