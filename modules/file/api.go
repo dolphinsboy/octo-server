@@ -413,12 +413,13 @@ func (f *File) getUploadCredentials(c *wkhttp.Context) {
 	}
 
 	c.Response(map[string]interface{}{
+		"method":      "PUT",
 		"uploadUrl":   uploadURL,
 		"downloadUrl": downloadURL,
-		"key":         objectKey,
-		"expiredTime": time.Now().Add(expiry).Unix(),
-		"method":      "PUT",
 		"contentType": contentType,
+		"key":         objectKey,
+		"expiresIn":   int(expiry.Seconds()),
+		"expiredTime": time.Now().Add(expiry).Unix(),
 	})
 }
 

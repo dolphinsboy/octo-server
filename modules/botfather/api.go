@@ -1329,7 +1329,8 @@ func (bf *BotFather) botUploadCredentials(c *wkhttp.Context) {
 	objectPath := fmt.Sprintf("chat/%d/%s_%s", time.Now().Unix(), util.GenerUUID(), url.PathEscape(filename))
 	contentType := c.DefaultQuery("contentType", "application/octet-stream")
 
-	uploadURL, downloadURL, err := bf.fileService.PresignedPutURL(objectPath, contentType, 30*time.Minute)
+	expiry := 30 * time.Minute
+	uploadURL, downloadURL, err := bf.fileService.PresignedPutURL(objectPath, contentType, expiry)
 	if err != nil {
 		bf.Error("生成预签名上传URL失败", zap.Error(err))
 		c.ResponseError(errors.New("生成上传URL失败"))
@@ -1342,7 +1343,8 @@ func (bf *BotFather) botUploadCredentials(c *wkhttp.Context) {
 		"downloadUrl": downloadURL,
 		"contentType": contentType,
 		"key":         objectPath,
-		"expiresIn":   1800,
+		"expiresIn":   int(expiry.Seconds()),
+		"expiredTime": time.Now().Add(expiry).Unix(),
 	})
 }
 
