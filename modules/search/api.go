@@ -203,6 +203,7 @@ func (s *Search) global(c *wkhttp.Context) {
 	var groups []*group.GroupResp
 	var users []*user.UserDetailResp
 	if len(groupIds) > 0 {
+		groupIds = util.RemoveRepeatedElement(groupIds)
 		groups, err = s.groupService.GetGroupDetails(groupIds, loginUID)
 		if err != nil {
 			s.Error("查询群列表错误", zap.Error(err))
@@ -223,6 +224,15 @@ func (s *Search) global(c *wkhttp.Context) {
 		}
 	}
 
+	groupMap := make(map[string]*group.GroupResp, len(groups))
+	for _, g := range groups {
+		groupMap[g.GroupNo] = g
+	}
+	userMap := make(map[string]*user.UserDetailResp, len(users))
+	for _, u := range users {
+		userMap[u.UID] = u
+	}
+
 	// 加入的群（按 Space 过滤，membership 已由 SpaceMiddleware 校验）
 	groupResps := make([]*channelResp, 0)
 	searchSpaceID := spacepkg.GetSpaceID(c)
@@ -237,15 +247,10 @@ func (s *Search) global(c *wkhttp.Context) {
 			if strings.Contains(g.Name, req.Keyword) {
 				isAdd = true
 			}
-			if len(groups) > 0 {
-				for _, group := range groups {
-					if group.GroupNo == g.GroupNo {
-						remark = group.Remark
-						if strings.Contains(group.Remark, req.Keyword) {
-							isAdd = true
-						}
-						break
-					}
+			if gr, ok := groupMap[g.GroupNo]; ok {
+				remark = gr.Remark
+				if strings.Contains(gr.Remark, req.Keyword) {
+					isAdd = true
 				}
 			}
 			if isAdd {
@@ -388,48 +393,46 @@ func (s *Search) global(c *wkhttp.Context) {
 			}
 			var tempChannel *channelResp
 			if msg.ChannelType == common.ChannelTypePerson.Uint8() {
-				for _, user := range users {
-					if user.UID == msg.ChannelID {
-						tempChannel = &channelResp{
-							ChannelID:     user.UID,
-							ChannelType:   common.ChannelTypePerson.Uint8(),
-							ChannelRemark: html.EscapeString(user.Remark),
-							ChannelName:   html.EscapeString(user.Name),
-						}
-						break
+				if u, ok := userMap[msg.ChannelID]; ok {
+					tempChannel = &channelResp{
+						ChannelID:     u.UID,
+						ChannelType:   common.ChannelTypePerson.Uint8(),
+						ChannelRemark: html.EscapeString(u.Remark),
+						ChannelName:   html.EscapeString(u.Name),
 					}
 				}
 			}
 			var fromChannel *channelResp
-			if len(users) > 0 && msg.FromUID != "" {
-				for _, user := range users {
-					if msg.FromUID == user.UID {
-						fromChannel = &channelResp{
-							ChannelID:     user.UID,
-							ChannelType:   common.ChannelTypePerson.Uint8(),
-							ChannelRemark: html.EscapeString(user.Remark),
-							ChannelName:   html.EscapeString(user.Name),
-						}
-						break
+			if msg.FromUID != "" {
+				if u, ok := userMap[msg.FromUID]; ok {
+					fromChannel = &channelResp{
+						ChannelID:     u.UID,
+						ChannelType:   common.ChannelTypePerson.Uint8(),
+						ChannelRemark: html.EscapeString(u.Remark),
+						ChannelName:   html.EscapeString(u.Name),
 					}
 				}
 			}
 			if msg.ChannelType == common.ChannelTypeGroup.Uint8() {
-				for _, group := range groups {
-					if group.GroupNo == msg.ChannelID {
-						tempChannel = &channelResp{
-							ChannelID:     group.GroupNo,
-							ChannelType:   common.ChannelTypeGroup.Uint8(),
-							ChannelName:   html.EscapeString(group.Name),
-							ChannelRemark: html.EscapeString(group.Remark),
-						}
-						break
+				if g, ok := groupMap[msg.ChannelID]; ok {
+					tempChannel = &channelResp{
+						ChannelID:     g.GroupNo,
+						ChannelType:   common.ChannelTypeGroup.Uint8(),
+						ChannelName:   html.EscapeString(g.Name),
+						ChannelRemark: html.EscapeString(g.Remark),
 					}
 				}
 			}
 			if msg.ChannelType == common.ChannelTypeCommunityTopic.Uint8() {
 				if parentGroupNo, ok := threadParentMap[msg.ChannelID]; ok {
-					tempChannel = buildThreadChannel(msg.ChannelID, parentGroupNo, groups)
+					if g, ok := groupMap[parentGroupNo]; ok {
+						tempChannel = &channelResp{
+							ChannelID:     msg.ChannelID,
+							ChannelType:   common.ChannelTypeCommunityTopic.Uint8(),
+							ChannelName:   html.EscapeString(g.Name),
+							ChannelRemark: html.EscapeString(g.Remark),
+						}
+					}
 				}
 			}
 			messagesResp = append(messagesResp, &messageResp{
@@ -500,18 +503,4 @@ func collectChannelIDs(messages []*config.MessageResp) (groupIDs, uids, fromUIDs
 		}
 	}
 	return
-}
-
-func buildThreadChannel(channelID string, parentGroupNo string, groups []*group.GroupResp) *channelResp {
-	for _, g := range groups {
-		if g.GroupNo == parentGroupNo {
-			return &channelResp{
-				ChannelID:     channelID,
-				ChannelType:   common.ChannelTypeCommunityTopic.Uint8(),
-				ChannelName:   html.EscapeString(g.Name),
-				ChannelRemark: html.EscapeString(g.Remark),
-			}
-		}
-	}
-	return nil
 }

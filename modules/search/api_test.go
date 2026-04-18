@@ -5,7 +5,6 @@ import (
 
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
-	"github.com/Mininglamp-OSS/octo-server/modules/group"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -97,73 +96,6 @@ func TestCollectChannelIDs_ThreadMessage(t *testing.T) {
 			assert.Equal(t, tt.expectUIDs, uids)
 			assert.Equal(t, tt.expectFromUIDs, fromUIDs)
 			assert.Equal(t, tt.expectThreadMap, threadMap)
-		})
-	}
-}
-
-func TestBuildThreadChannel(t *testing.T) {
-	groups := []*group.GroupResp{
-		{GroupNo: "grp1", Name: "开发群", Remark: "dev team"},
-		{GroupNo: "grp2", Name: "测试群", Remark: ""},
-	}
-
-	tests := []struct {
-		name          string
-		channelID     string
-		parentGroupNo string
-		groups        []*group.GroupResp
-		expectNil     bool
-		expectID      string
-		expectType    uint8
-		expectName    string
-	}{
-		{
-			name:          "thread_with_known_parent_group",
-			channelID:     "grp1____2044239261124792320",
-			parentGroupNo: "grp1",
-			groups:        groups,
-			expectNil:     false,
-			expectID:      "grp1____2044239261124792320",
-			expectType:    common.ChannelTypeCommunityTopic.Uint8(),
-			expectName:    "开发群",
-		},
-		{
-			name:          "thread_with_unknown_parent_group",
-			channelID:     "unknown____2044239261124792320",
-			parentGroupNo: "unknown",
-			groups:        groups,
-			expectNil:     true,
-		},
-		{
-			name:          "thread_with_empty_groups",
-			channelID:     "grp1____2044239261124792320",
-			parentGroupNo: "grp1",
-			groups:        nil,
-			expectNil:     true,
-		},
-		{
-			name:          "thread_html_escape_in_name",
-			channelID:     "grp3____2044239261124792320",
-			parentGroupNo: "grp3",
-			groups:        []*group.GroupResp{{GroupNo: "grp3", Name: "<script>alert</script>", Remark: "a&b"}},
-			expectNil:     false,
-			expectID:      "grp3____2044239261124792320",
-			expectType:    common.ChannelTypeCommunityTopic.Uint8(),
-			expectName:    "&lt;script&gt;alert&lt;/script&gt;",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := buildThreadChannel(tt.channelID, tt.parentGroupNo, tt.groups)
-			if tt.expectNil {
-				assert.Nil(t, result)
-			} else {
-				assert.NotNil(t, result)
-				assert.Equal(t, tt.expectID, result.ChannelID)
-				assert.Equal(t, tt.expectType, result.ChannelType)
-				assert.Equal(t, tt.expectName, result.ChannelName)
-			}
 		})
 	}
 }
