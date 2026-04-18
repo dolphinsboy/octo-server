@@ -182,7 +182,7 @@ func (c *Category) list(ctx *wkhttp.Context) {
 				CategoryID: util.GenerUUID(),
 				SpaceID:    spaceID,
 				UID:        loginUID,
-				Name:       "未分类",
+				Name:       defaultCategoryName(),
 				Sort:       maxSort + 1,
 				IsDefault:  intPtr(1),
 			}
