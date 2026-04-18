@@ -490,7 +490,7 @@ func (h *commandHandler) handleQuickstart(fromUID string) {
 	}
 
 	apiKeyFormatted := "`" + apiKey + "`"
-	h.reply(fromUID, fmt.Sprintf("🚀 **Quickstart**\n\n💡 User API Key 可反复使用，用于管理你的所有 Bot%s  \n🔑 你的 API Key: %s\n\n📋 把下面全部内容复制发给 OpenClaw 模型执行。\n如未安装 DMWork 插件，先发送 /install 获取安装指南。\n\n---\n\n为所有 agent 批量创建并绑定 DMWork bot：\n```\nnpx -y openclaw-channel-dmwork quickstart --api-key %s --api-url %s\n```",
+	h.reply(fromUID, fmt.Sprintf("🚀 **Quickstart**\n\n💡 User API Key 可反复使用，用于管理你的所有 Bot%s  \n🔑 你的 API Key: %s\n\n📋 把下面框内全部内容复制发给 OpenClaw 模型执行。\n如未安装 DMWork 插件，先发送 /install 获取安装指南。\n\n```\n为所有 agent 批量创建并绑定 DMWork bot：\nnpx -y openclaw-channel-dmwork quickstart --api-key %s --api-url %s\n```",
 		spaceInfo, apiKeyFormatted,
 		apiKey, apiURL))
 }
@@ -1090,7 +1090,7 @@ func (h *commandHandler) sendCreatedPrompt(toUID string, name string, bot *robot
 		apiURL = fmt.Sprintf("http://%s:8090", cfg.External.IP)
 	}
 
-	msg := fmt.Sprintf("✅ 机器人「**%s**」创建成功！\n\n**Bot Name:** %s  \n**Bot Token:** %s  \n**API Server:** %s\n\n📋 把下面全部内容复制发给 OpenClaw 模型执行。\n如未安装 DMWork 插件，先发送 /install 获取安装指南。\n\n---\n\n使用以下命令将当前 agent 绑定到 DMWork bot %s：\n```\nnpx -y openclaw-channel-dmwork bind --bot-token %s --api-url %s --account-id %s --agent <你的agent标识>\n```\n当前 agent 标识可通过 /status 查看",
+	msg := fmt.Sprintf("✅ 机器人「**%s**」创建成功！\n\n**Bot Name:** %s  \n**Bot Token:** %s  \n**API Server:** %s\n\n📋 把下面框内全部内容复制发给 OpenClaw 模型执行。\n如未安装 DMWork 插件，先发送 /install 获取安装指南。\n\n```\n使用以下命令将当前 agent 绑定到 DMWork bot %s：\nnpx -y openclaw-channel-dmwork bind --bot-token %s --api-url %s --account-id %s --agent <你的agent标识>\n当前 agent 标识可通过 /status 查看\n```",
 		name, name, bot.BotToken, apiURL,
 		bot.RobotID, bot.BotToken, apiURL, bot.RobotID)
 
