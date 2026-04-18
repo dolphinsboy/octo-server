@@ -183,7 +183,7 @@ func (s *Search) global(c *wkhttp.Context) {
 			realMessages = append(realMessages, m)
 		}
 	}
-	groupIds, uids, msgFromUids := collectChannelIDs(realMessages)
+	groupIds, uids, msgFromUids, threadParentMap := collectChannelIDs(realMessages)
 
 	var joinedGroups []*group.InfoResp
 	if req.OnlyMessage == 0 {
@@ -428,7 +428,9 @@ func (s *Search) global(c *wkhttp.Context) {
 				}
 			}
 			if msg.ChannelType == common.ChannelTypeCommunityTopic.Uint8() {
-				tempChannel = buildThreadChannel(msg.ChannelID, groups)
+				if parentGroupNo, ok := threadParentMap[msg.ChannelID]; ok {
+					tempChannel = buildThreadChannel(msg.ChannelID, parentGroupNo, groups)
+				}
 			}
 			messagesResp = append(messagesResp, &messageResp{
 				MessageIDStr: msg.MessageIDStr,
@@ -473,10 +475,11 @@ type messageResp struct {
 	FromChannel  *channelResp           `json:"from_channel"`      // 消息发送者channel
 }
 
-func collectChannelIDs(messages []*config.MessageResp) (groupIDs, uids, fromUIDs []string) {
+func collectChannelIDs(messages []*config.MessageResp) (groupIDs, uids, fromUIDs []string, threadParentMap map[string]string) {
 	groupIDs = make([]string, 0)
 	uids = make([]string, 0)
 	fromUIDs = make([]string, 0)
+	threadParentMap = make(map[string]string)
 	for _, m := range messages {
 		switch {
 		case m.ChannelType == common.ChannelTypeGroup.Uint8():
@@ -489,6 +492,7 @@ func collectChannelIDs(messages []*config.MessageResp) (groupIDs, uids, fromUIDs
 				log.Warn("解析Thread channel_id失败，跳过", zap.String("channel_id", m.ChannelID), zap.Error(err))
 			} else {
 				groupIDs = append(groupIDs, parentGroupNo)
+				threadParentMap[m.ChannelID] = parentGroupNo
 			}
 		}
 		if m.FromUID != "" {
@@ -498,11 +502,7 @@ func collectChannelIDs(messages []*config.MessageResp) (groupIDs, uids, fromUIDs
 	return
 }
 
-func buildThreadChannel(channelID string, groups []*group.GroupResp) *channelResp {
-	parentGroupNo, _, err := thread.ParseChannelID(channelID)
-	if err != nil {
-		return nil
-	}
+func buildThreadChannel(channelID string, parentGroupNo string, groups []*group.GroupResp) *channelResp {
 	for _, g := range groups {
 		if g.GroupNo == parentGroupNo {
 			return &channelResp{
