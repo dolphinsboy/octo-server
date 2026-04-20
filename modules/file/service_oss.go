@@ -27,7 +27,7 @@ func NewServiceOSS(ctx *config.Context) *ServiceOSS {
 }
 
 // UploadFile 上传文件
-func (s *ServiceOSS) UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
+func (s *ServiceOSS) UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
 	ossCfg := s.ctx.GetConfig().OSS
 	client, err := oss.New(ossCfg.Endpoint, ossCfg.AccessKeyID, ossCfg.AccessKeySecret)
 	if err != nil {

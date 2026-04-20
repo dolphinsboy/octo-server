@@ -1239,7 +1239,7 @@ func (rb *Robot) botUploadFile(c *wkhttp.Context) {
 	}
 
 	storagePath := fmt.Sprintf("%s%s", fileType, path)
-	_, err = rb.fileService.UploadFile(storagePath, contentType, func(w io.Writer) error {
+	_, err = rb.fileService.UploadFile(storagePath, contentType, "", func(w io.Writer) error {
 		_, err := io.Copy(w, multipartFile)
 		return err
 	})

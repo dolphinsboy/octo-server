@@ -20,7 +20,7 @@ type mockFileServiceForUpload struct {
 	lastObjectPath string
 }
 
-func (m *mockFileServiceForUpload) UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
+func (m *mockFileServiceForUpload) UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
 	return nil, nil
 }
 

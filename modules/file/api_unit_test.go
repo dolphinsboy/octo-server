@@ -205,7 +205,7 @@ func (m *mockService) DownloadImage(url string, ctx context.Context) (io.ReadClo
 	return nil, nil
 }
 
-func (m *mockService) UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
+func (m *mockService) UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
 	return nil, nil
 }
 

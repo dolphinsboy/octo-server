@@ -1197,7 +1197,7 @@ func (bf *BotFather) botUploadFile(c *wkhttp.Context) {
 
 	storagePath := fmt.Sprintf("%s%s", fileType, path)
 	contentType := "application/octet-stream"
-	_, err = bf.fileService.UploadFile(storagePath, contentType, func(w io.Writer) error {
+	_, err = bf.fileService.UploadFile(storagePath, contentType, "", func(w io.Writer) error {
 		_, err := io.Copy(w, multipartFile)
 		return err
 	})

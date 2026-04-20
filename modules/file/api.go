@@ -253,7 +253,8 @@ func (f *File) uploadFile(c *wkhttp.Context) {
 		}
 		sign = h.Sum(nil)
 	}
-	_, err = f.service.UploadFile(fmt.Sprintf("%s%s", fileType, path), contentType, func(w io.Writer) error {
+	contentDisposition := buildContentDisposition(fileName)
+	_, err = f.service.UploadFile(fmt.Sprintf("%s%s", fileType, path), contentType, contentDisposition, func(w io.Writer) error {
 		_, err := file.Seek(0, io.SeekStart)
 		if err != nil {
 			f.Error("设置文件偏移量错误", zap.Error(err))

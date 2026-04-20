@@ -29,7 +29,7 @@ func NewServiceQiniu(ctx *config.Context) *ServiceQiniu {
 }
 
 // UploadFile 上传文件
-func (s *ServiceQiniu) UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
+func (s *ServiceQiniu) UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
 
 	qiniuCfg := s.ctx.GetConfig().Qiniu
 

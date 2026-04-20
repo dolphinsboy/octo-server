@@ -61,7 +61,7 @@ func (sc *ServiceCOS) getClient() (*minio.Client, error) {
 }
 
 // UploadFile 上传文件到腾讯云COS
-func (sc *ServiceCOS) UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
+func (sc *ServiceCOS) UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
 	buff := bytes.NewBuffer(make([]byte, 0))
 	err := copyFileWriter(buff)
 	if err != nil {
@@ -79,11 +79,16 @@ func (sc *ServiceCOS) UploadFile(filePath string, contentType string, copyFileWr
 	// COS 单 bucket 模式：保留完整路径（含 chat/ 等原始 bucket 名），用 prefix 区分环境
 	fileName := sc.withPrefix(filePath)
 
-	ctx := context.Background()
-	n, err := client.PutObject(ctx, bucketName, fileName, buff, int64(buff.Len()), minio.PutObjectOptions{
+	opts := minio.PutObjectOptions{
 		ContentType: contentType,
 		PartSize:    10 * 1024 * 1024,
-	})
+	}
+	if contentDisposition != "" {
+		opts.ContentDisposition = contentDisposition
+	}
+
+	ctx := context.Background()
+	n, err := client.PutObject(ctx, bucketName, fileName, buff, int64(buff.Len()), opts)
 	if err != nil {
 		sc.Error("上传文件到COS失败", zap.Error(err))
 		return map[string]interface{}{

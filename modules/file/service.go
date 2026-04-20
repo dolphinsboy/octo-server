@@ -29,7 +29,7 @@ import (
 )
 
 type IUploadService interface {
-	UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error)
+	UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error)
 	// 获取下载地址
 	DownloadURL(path string, filename string) (string, error)
 	// 直接读取文件内容（用于 MinIO 等非 public bucket）
@@ -78,8 +78,8 @@ type Service struct {
 	uploadService IUploadService
 }
 
-func (s *Service) UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
-	return s.uploadService.UploadFile(filePath, contentType, copyFileWriter)
+func (s *Service) UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
+	return s.uploadService.UploadFile(filePath, contentType, contentDisposition, copyFileWriter)
 }
 
 func (s *Service) DownloadURL(path string, filename string) (string, error) {
@@ -182,7 +182,7 @@ func (s *Service) DownloadAndMakeCompose(uploadPath string, downloadURLs []strin
 
 	// uploadURL := fmt.Sprintf("%s/public%s", s.ctx.GetConfig().UploadURL, uploadPath)
 	// 上传文件
-	resultMap, err := s.UploadFile(uploadPath, "image/png", func(w io.Writer) error {
+	resultMap, err := s.UploadFile(uploadPath, "image/png", "", func(w io.Writer) error {
 		return png.Encode(w, img)
 	})
 	if err != nil {

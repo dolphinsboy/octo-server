@@ -24,7 +24,7 @@ func NewSeaweedFS(ctx *config.Context) *SeaweedFS {
 }
 
 // UploadFile 上传文件
-func (s *SeaweedFS) UploadFile(filePath string, contentType string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
+func (s *SeaweedFS) UploadFile(filePath string, contentType string, contentDisposition string, copyFileWriter func(io.Writer) error) (map[string]interface{}, error) {
 	fileDir, fileName := filepath.Split(filePath)
 	s.Debug("filePath->", zap.String("filePath", filePath), zap.String("fileDir", fileDir), zap.String("fileName", fileName))
 	newFileDir := fileDir
