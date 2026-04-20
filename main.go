@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 
 	_ "github.com/Mininglamp-OSS/octo-server/internal"
 	"github.com/Mininglamp-OSS/octo-server/modules/base/event"
+	"github.com/Mininglamp-OSS/octo-server/pkg/wkhttp"
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/module"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
@@ -91,6 +93,19 @@ func runAPI(ctx *config.Context) {
 		}
 		gin.Logger()(c)
 	})
+	rps := 200.0
+	burst := 300
+	if v := os.Getenv("DM_API_RATELIMIT_RPS"); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
+			rps = n
+		}
+	}
+	if v := os.Getenv("DM_API_RATELIMIT_BURST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			burst = n
+		}
+	}
+	s.GetRoute().UseGin(wkhttp.RateLimitMiddleware(rps, burst, "/v1/ping"))
 	// 模块安装
 	err := module.Setup(ctx)
 	if err != nil {
