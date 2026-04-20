@@ -2126,16 +2126,20 @@ func newSyncChannelMessageResp(resp *config.SyncChannelMessageResp, loginUID str
 	if len(resp.Messages) > 0 {
 		messageIDs := make([]string, 0, len(resp.Messages))
 		for _, message := range resp.Messages {
-			var payloadMap map[string]interface{}
-			err := util.ReadJsonByByte(message.Payload, &payloadMap)
-			if err != nil {
-				log.Warn("负荷数据不是json格式！", zap.Error(err), zap.String("payload", string(message.Payload)))
-			}
-			if len(payloadMap) > 0 {
-				replyJson := payloadMap["reply"]
-				if replyMap, ok := replyJson.(map[string]interface{}); ok {
-					if msgId, ok := replyMap["message_id"].(string); ok {
-						messageIDs = append(messageIDs, msgId)
+			// 超大 payload 最终会被 TruncatedPayload 截断并丢失 reply 信息，
+			// 这里跳过解析避免对同一 []byte 反复反序列化。
+			if len(message.Payload) <= MaxSyncPayloadSize {
+				var payloadMap map[string]interface{}
+				err := util.ReadJsonByByte(message.Payload, &payloadMap)
+				if err != nil {
+					log.Warn("负荷数据不是json格式！", zap.Error(err), zap.String("payload", string(message.Payload)))
+				}
+				if len(payloadMap) > 0 {
+					replyJson := payloadMap["reply"]
+					if replyMap, ok := replyJson.(map[string]interface{}); ok {
+						if msgId, ok := replyMap["message_id"].(string); ok {
+							messageIDs = append(messageIDs, msgId)
+						}
 					}
 				}
 			}
@@ -2149,6 +2153,11 @@ func newSyncChannelMessageResp(resp *config.SyncChannelMessageResp, loginUID str
 		}
 		// 修改消息扩展字段
 		for _, message := range resp.Messages {
+			// 超大 payload 会走 TruncatedPayload 的白名单路径，reply 信息本就会丢失，
+			// 这里跳过避免再次反序列化同一 []byte 以及写回后又被截断的无用功。
+			if len(message.Payload) > MaxSyncPayloadSize {
+				continue
+			}
 			var payloadMap map[string]interface{}
 			err := util.ReadJsonByByte(message.Payload, &payloadMap)
 			if err != nil {
