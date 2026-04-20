@@ -2,7 +2,6 @@ package wkhttp
 
 import (
 	"context"
-	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -155,23 +154,12 @@ func (k *keyedLimiter) allow(ctx context.Context, key string) (allowed bool, rem
 }
 
 // setRateLimitHeaders 写入标准限流响应头，allowed=false 时同时写 Retry-After。
-// Retry-After 按 RFC 7231 用整秒表达；rps > 1 时 sub-second 无法表达，clamp 到 1。
-func setRateLimitHeaders(h http.Header, burst, remaining int, rps float64, allowed bool, retryAfter int) {
+// Retry-After 的下限由 Lua 脚本保证（math.max(1, ...)）；fail-open 分支
+// allowed=true 不会进入此处的 !allowed 写入路径，因此无需在 Go 侧兜底 clamp。
+func setRateLimitHeaders(h http.Header, burst, remaining int, allowed bool, retryAfter int) {
 	h.Set("X-RateLimit-Limit", strconv.Itoa(burst))
-	if remaining < 0 {
-		remaining = 0
-	}
 	h.Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	if !allowed {
-		if retryAfter < 1 {
-			retryAfter = 1
-			if rps > 0 {
-				retryAfter = int(math.Ceil(1.0 / rps))
-				if retryAfter < 1 {
-					retryAfter = 1
-				}
-			}
-		}
 		h.Set("Retry-After", strconv.Itoa(retryAfter))
 	}
 }
@@ -225,7 +213,7 @@ func RateLimitMiddleware(ctx context.Context, client *rd.Client, rps float64, bu
 		}
 
 		allowed, remaining, retryAfter, _ := kl.allow(c.Request.Context(), ip)
-		setRateLimitHeaders(c.Writer.Header(), burst, remaining, rps, allowed, retryAfter)
+		setRateLimitHeaders(c.Writer.Header(), burst, remaining, allowed, retryAfter)
 
 		if !allowed {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
@@ -271,7 +259,7 @@ func StrictIPRateLimitMiddleware(ctx context.Context, client *rd.Client, tag str
 		}
 
 		allowed, remaining, retryAfter, _ := kl.allow(c.Request.Context(), ip)
-		setRateLimitHeaders(c.Writer.Header(), burst, remaining, rps, allowed, retryAfter)
+		setRateLimitHeaders(c.Writer.Header(), burst, remaining, allowed, retryAfter)
 
 		if !allowed {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
@@ -313,7 +301,7 @@ func UIDRateLimitMiddleware(ctx context.Context, client *rd.Client, rps float64,
 		}
 
 		allowed, remaining, retryAfter, _ := kl.allow(c.Request.Context(), uid)
-		setRateLimitHeaders(c.Writer.Header(), burst, remaining, rps, allowed, retryAfter)
+		setRateLimitHeaders(c.Writer.Header(), burst, remaining, allowed, retryAfter)
 
 		if !allowed {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
