@@ -211,7 +211,7 @@ func (u *User) Route(r *wkhttp.WKHttp) {
 		v.POST("/user/sms/registercode", smsLimit, u.sendRegisterCode)             //获取注册短信验证码
 		v.POST("/user/login_authcode/:auth_code", loginLimit, u.loginWithAuthCode) // 通过认证码登录
 		v.POST("/user/sms/login_check_phone", smsLimit, u.sendLoginCheckPhoneCode) //发送登录设备验证验证码
-		v.POST("/user/login/check_phone", u.loginCheckPhone)             //登录验证设备手机号
+		v.POST("/user/login/check_phone", loginLimit, u.loginCheckPhone) //登录验证设备手机号
 
 		// #################### 第三方授权 ####################
 		v.GET("/user/thirdlogin/authcode", u.thirdAuthcode)     // 第三方授权码获取
