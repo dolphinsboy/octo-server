@@ -85,6 +85,13 @@ func TruncatedPayload(raw []byte) map[string]interface{} {
 	}
 	s := contentToString(m["content"])
 	m["content"] = truncateUTF8(s, truncatedContentHeadBytes) + truncatedContentSuffix
+	// 终检：截断 content 后，若其他未知字段仍把整体撑过阈值，回退到白名单只保留
+	// type / visibles / content，避免自定义扩展字段塞超大内容泄漏到前端。
+	if b, err := json.Marshal(m); err == nil && len(b) > MaxSyncPayloadSize {
+		fallback := truncatedFallback(m)
+		fallback["content"] = m["content"]
+		return fallback
+	}
 	return m
 }
 
@@ -95,7 +102,8 @@ func CoerceTextPayloadContent(m map[string]interface{}) {
 	if len(m) == 0 {
 		return
 	}
-	var t int
+	// 初始化为 -1 表示未识别类型，避免 common.Text 若为 0 时的隐式误匹配。
+	t := -1
 	switch v := m["type"].(type) {
 	case float64:
 		t = int(v)

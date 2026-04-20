@@ -203,6 +203,53 @@ func TestTruncatedPayload(t *testing.T) {
 		assert.Equal(t, truncatedContentSuffix, got["content"])
 	})
 
+	t.Run("oversized custom fields dropped when content truncated", func(t *testing.T) {
+		// content 很短，但自定义扩展字段 300KB。截断后终检应发现整体仍超限，
+		// 回退到白名单（type + visibles + content），丢弃 extension。
+		raw, _ := json.Marshal(map[string]interface{}{
+			"type":      1,
+			"content":   "hi",
+			"visibles":  []interface{}{"u1"},
+			"extension": strings.Repeat("x", 300*1024),
+		})
+		got := TruncatedPayload(raw)
+		_, hasExt := got["extension"]
+		assert.False(t, hasExt, "oversized extension field must be dropped")
+		assert.NotNil(t, got["type"])
+		_, hasVisibles := got["visibles"]
+		assert.True(t, hasVisibles)
+		assert.Contains(t, got["content"], truncatedContentSuffix)
+	})
+
+	t.Run("small custom fields kept when overall size is safe", func(t *testing.T) {
+		raw, _ := json.Marshal(map[string]interface{}{
+			"type":    1,
+			"content": strings.Repeat("a", 5000),
+			"mention": []interface{}{"u1", "u2"},
+		})
+		got := TruncatedPayload(raw)
+		mention, ok := got["mention"].([]interface{})
+		assert.True(t, ok, "small extension fields should survive")
+		assert.Len(t, mention, 2)
+	})
+
+	t.Run("nil input falls back to placeholder", func(t *testing.T) {
+		got := TruncatedPayload(nil)
+		assert.Equal(t, errType, got["type"])
+		assert.Equal(t, truncatedContentSuffix, got["content"])
+	})
+
+	t.Run("string typed type field does not trigger text coercion", func(t *testing.T) {
+		// CoerceTextPayloadContent 应忽略 string 类型的 "1"，避免误命中。
+		m := map[string]interface{}{
+			"type":    "1",
+			"content": map[string]interface{}{"k": "v"},
+		}
+		CoerceTextPayloadContent(m)
+		_, stillMap := m["content"].(map[string]interface{})
+		assert.True(t, stillMap, "string-typed type field must not trigger coercion")
+	})
+
 	t.Run("chinese content truncation is valid utf8", func(t *testing.T) {
 		big := strings.Repeat("你好", 1000) // 6000 bytes
 		raw, _ := json.Marshal(map[string]interface{}{
