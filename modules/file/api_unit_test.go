@@ -260,7 +260,7 @@ func TestBuildContentDisposition(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildContentDisposition(tt.filename)
+			got := BuildContentDisposition(tt.filename)
 			assert.Equal(t, tt.want, got)
 		})
 	}
@@ -276,7 +276,7 @@ func TestBuildContentDisposition_AlwaysHasBothFilenameParams(t *testing.T) {
 	}
 	for _, fn := range filenames {
 		t.Run(fn, func(t *testing.T) {
-			got := buildContentDisposition(fn)
+			got := BuildContentDisposition(fn)
 			assert.Contains(t, got, "filename=")
 			assert.Contains(t, got, "filename*=UTF-8''")
 		})
@@ -530,11 +530,11 @@ func TestGetUploadCredentials_FallbackWithoutFilename(t *testing.T) {
 }
 
 func TestBuildContentDisposition_UsesInline(t *testing.T) {
-	// Verify that buildContentDisposition uses "inline" not "attachment"
+	// Verify that BuildContentDisposition uses "inline" not "attachment"
 	tests := []string{"report.pdf", "photo.jpg", "报告.pdf", "test file.txt"}
 	for _, fn := range tests {
 		t.Run(fn, func(t *testing.T) {
-			got := buildContentDisposition(fn)
+			got := BuildContentDisposition(fn)
 			assert.Contains(t, got, "inline;")
 			assert.NotContains(t, got, "attachment")
 		})

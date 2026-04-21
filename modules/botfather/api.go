@@ -1189,15 +1189,19 @@ func (bf *BotFather) botUploadFile(c *wkhttp.Context) {
 	fileName := fileHeader.Filename
 	path := uploadPath
 	if path == "" {
-		path = fmt.Sprintf("/%d/%s", time.Now().Unix(), fileName)
+		path = fmt.Sprintf("/%d/%s%s", time.Now().Unix(), util.GenerUUID(), filepath.Ext(fileName))
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 
 	storagePath := fmt.Sprintf("%s%s", fileType, path)
-	contentType := "application/octet-stream"
-	_, err = bf.fileService.UploadFile(storagePath, contentType, "", func(w io.Writer) error {
+	contentType := mime.TypeByExtension(filepath.Ext(fileName))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	contentDisposition := file.BuildContentDisposition(fileName)
+	_, err = bf.fileService.UploadFile(storagePath, contentType, contentDisposition, func(w io.Writer) error {
 		_, err := io.Copy(w, multipartFile)
 		return err
 	})
@@ -1427,8 +1431,9 @@ func (bf *BotFather) botUploadPresigned(c *wkhttp.Context) {
 		contentType = "application/octet-stream"
 	}
 
+	contentDisposition := file.BuildContentDisposition(filename)
 	expiry := 30 * time.Minute
-	uploadURL, downloadURL, err := bf.fileService.PresignedPutURL(objectPath, contentType, "", expiry)
+	uploadURL, downloadURL, err := bf.fileService.PresignedPutURL(objectPath, contentType, contentDisposition, expiry)
 	if err != nil {
 		bf.Error("生成预签名上传URL失败", zap.Error(err))
 		c.ResponseError(errors.New("生成上传URL失败"))

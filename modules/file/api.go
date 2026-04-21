@@ -255,7 +255,7 @@ func (f *File) uploadFile(c *wkhttp.Context) {
 		}
 		sign = h.Sum(nil)
 	}
-	contentDisposition := buildContentDisposition(fileName)
+	contentDisposition := BuildContentDisposition(fileName)
 	_, err = f.service.UploadFile(fmt.Sprintf("%s%s", fileType, path), contentType, contentDisposition, func(w io.Writer) error {
 		_, err := file.Seek(0, io.SeekStart)
 		if err != nil {
@@ -437,7 +437,7 @@ func (f *File) getUploadCredentials(c *wkhttp.Context) {
 	}
 
 	// 构造 Content-Disposition
-	contentDisposition := buildContentDisposition(filename)
+	contentDisposition := BuildContentDisposition(filename)
 
 	expiry := 30 * time.Minute
 	uploadURL, downloadURL, err := f.service.PresignedPutURL(objectKey, contentType, contentDisposition, expiry)
@@ -515,7 +515,7 @@ func (f *File) getDownloadURL(c *wkhttp.Context) {
 	})
 }
 
-// buildContentDisposition 根据文件名构造 RFC 6266 兼容的 Content-Disposition 头。
+// BuildContentDisposition 根据文件名构造 RFC 6266 兼容的 Content-Disposition 头。
 // 始终同时提供 filename（ASCII 回退）和 filename*（RFC 5987 编码），
 // 以确保新旧客户端都能正确解析下载文件名。
 // rfc5987Encode encodes a filename for RFC 5987 filename* parameter.
@@ -525,7 +525,7 @@ func rfc5987Encode(s string) string {
 	return strings.ReplaceAll(encoded, "'", "%27")
 }
 
-func buildContentDisposition(filename string) string {
+func BuildContentDisposition(filename string) string {
 	if filename == "" {
 		return ""
 	}
