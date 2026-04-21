@@ -1238,7 +1238,8 @@ func (rb *Robot) botUploadFile(c *wkhttp.Context) {
 	}
 
 	storagePath := fmt.Sprintf("%s%s", fileType, path)
-	_, err = rb.fileService.UploadFile(storagePath, contentType, "", func(w io.Writer) error {
+	contentDisposition := file.BuildContentDisposition(fileName)
+	_, err = rb.fileService.UploadFile(storagePath, contentType, contentDisposition, func(w io.Writer) error {
 		_, err := io.Copy(w, multipartFile)
 		return err
 	})
@@ -1365,8 +1366,9 @@ func (rb *Robot) botUploadPresigned(c *wkhttp.Context) {
 		contentType = "application/octet-stream"
 	}
 
+	contentDisposition := file.BuildContentDisposition(filename)
 	expiry := 30 * time.Minute
-	uploadURL, downloadURL, err := rb.fileService.PresignedPutURL(objectPath, contentType, "", expiry)
+	uploadURL, downloadURL, err := rb.fileService.PresignedPutURL(objectPath, contentType, contentDisposition, expiry)
 	if err != nil {
 		rb.Error("生成预签名上传URL失败", zap.Error(err))
 		c.ResponseError(errors.New("生成上传URL失败"))
