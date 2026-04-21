@@ -18,7 +18,6 @@ import (
 
 	"io"
 	"mime"
-	"net/url"
 	"path/filepath"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/base/app"
@@ -1232,14 +1231,15 @@ func (rb *Robot) botUploadFile(c *wkhttp.Context) {
 
 	path := uploadPath
 	if path == "" {
-		path = fmt.Sprintf("/%d/%s", time.Now().Unix(), url.PathEscape(fileName))
+		path = fmt.Sprintf("/%d/%s%s", time.Now().Unix(), util.GenerUUID(), filepath.Ext(fileName))
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
 
 	storagePath := fmt.Sprintf("%s%s", fileType, path)
-	_, err = rb.fileService.UploadFile(storagePath, contentType, "", func(w io.Writer) error {
+	contentDisposition := file.BuildContentDisposition(fileName)
+	_, err = rb.fileService.UploadFile(storagePath, contentType, contentDisposition, func(w io.Writer) error {
 		_, err := io.Copy(w, multipartFile)
 		return err
 	})
@@ -1284,7 +1284,9 @@ func (rb *Robot) botUploadCredentials(c *wkhttp.Context) {
 	}
 
 	prefix := strings.TrimSpace(cosConfig.Prefix)
-	objectPath := fmt.Sprintf("chat/%d/%s/%s", time.Now().Unix(), util.GenerUUID(), url.PathEscape(filename))
+	// Use UUID-based key (pure ASCII) to avoid double-encoding by HTTP clients.
+	fnExt := strings.ToLower(filepath.Ext(filename))
+	objectPath := fmt.Sprintf("chat/%d/%s/%s%s", time.Now().Unix(), util.GenerUUID(), util.GenerUUID(), fnExt)
 	var key string
 	if prefix != "" {
 		key = path.Join(prefix, objectPath)
@@ -1357,14 +1359,16 @@ func (rb *Robot) botUploadPresigned(c *wkhttp.Context) {
 		return
 	}
 
-	objectPath := fmt.Sprintf("chat/%d/%s/%s", time.Now().Unix(), util.GenerUUID(), url.PathEscape(filename))
+	// Use UUID-based key (pure ASCII) to avoid double-encoding by HTTP clients.
+	objectPath := fmt.Sprintf("chat/%d/%s/%s%s", time.Now().Unix(), util.GenerUUID(), util.GenerUUID(), ext)
 	contentType := mime.TypeByExtension(ext)
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 
+	contentDisposition := file.BuildContentDisposition(filename)
 	expiry := 30 * time.Minute
-	uploadURL, downloadURL, err := rb.fileService.PresignedPutURL(objectPath, contentType, "", expiry)
+	uploadURL, downloadURL, err := rb.fileService.PresignedPutURL(objectPath, contentType, contentDisposition, expiry)
 	if err != nil {
 		rb.Error("生成预签名上传URL失败", zap.Error(err))
 		c.ResponseError(errors.New("生成上传URL失败"))
