@@ -52,6 +52,8 @@ func (f *File) Route(r *wkhttp.WKHttp) {
 		// 预签名上传 URL 签发
 		auth.GET("/upload/presigned", f.getUploadCredentials)
 		auth.GET("/upload/credentials", f.getUploadCredentials) // 兼容旧路径
+		// 预签名下载 URL
+		auth.GET("/download/url", f.getDownloadURL)
 	}
 }
 
@@ -457,19 +459,79 @@ func (f *File) getUploadCredentials(c *wkhttp.Context) {
 	c.Response(resp)
 }
 
+// getDownloadURL 返回预签名 GET URL，用于客户端下载带正确文件名的文件
+func (f *File) getDownloadURL(c *wkhttp.Context) {
+	ph := c.Query("path")
+	if strings.TrimSpace(ph) == "" {
+		c.ResponseError(errors.New("path参数不能为空"))
+		return
+	}
+
+	// If path is a full URL, extract just the object path
+	// e.g. https://bucket.cos.region.myqcloud.com/prefix/chat/2/xxx → /chat/2/xxx
+	if strings.HasPrefix(ph, "http://") || strings.HasPrefix(ph, "https://") {
+		parsed, parseErr := url.Parse(ph)
+		if parseErr == nil {
+			ph = parsed.Path
+			// Strip the COS prefix (e.g. /bucket-prefix) from the path
+			cosPrefix := strings.TrimSpace(f.ctx.GetConfig().COS.Prefix)
+			if cosPrefix != "" {
+				ph = strings.TrimPrefix(ph, "/"+cosPrefix)
+			}
+		}
+	}
+
+	sanitized, err := sanitizePath(ph)
+	if err != nil {
+		c.ResponseError(errors.New("无效的文件路径"))
+		return
+	}
+
+	filename := c.Query("filename")
+	if strings.TrimSpace(filename) == "" {
+		filename = filepath.Base(sanitized)
+	}
+	filename = sanitizeFilename(filename)
+
+	disposition := c.Query("disposition")
+	if disposition != "inline" {
+		disposition = "attachment"
+	}
+
+	expiry := 30 * time.Minute
+	signedURL, err := f.service.PresignedGetURL(sanitized, filename, disposition, expiry)
+	if err != nil {
+		f.Error("生成预签名下载URL失败", zap.Error(err))
+		c.ResponseError(errors.New("生成预签名下载URL失败"))
+		return
+	}
+
+	c.Response(gin.H{
+		"url":      signedURL,
+		"filename": filename,
+	})
+}
+
 // buildContentDisposition 根据文件名构造 RFC 6266 兼容的 Content-Disposition 头。
 // 始终同时提供 filename（ASCII 回退）和 filename*（RFC 5987 编码），
 // 以确保新旧客户端都能正确解析下载文件名。
+// rfc5987Encode encodes a filename for RFC 5987 filename* parameter.
+// url.PathEscape doesn't encode single quotes, which are delimiters in RFC 5987.
+func rfc5987Encode(s string) string {
+	encoded := url.PathEscape(s)
+	return strings.ReplaceAll(encoded, "'", "%27")
+}
+
 func buildContentDisposition(filename string) string {
 	if filename == "" {
 		return ""
 	}
-	encoded := url.PathEscape(filename)
+	encoded := rfc5987Encode(filename)
 	if isASCII(filename) {
 		// ASCII 文件名：转义反斜杠和双引号以确保安全
 		safe := strings.ReplaceAll(filename, `\`, `\\`)
 		safe = strings.ReplaceAll(safe, `"`, `\"`)
-		return fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", safe, encoded)
+		return fmt.Sprintf("inline; filename=\"%s\"; filename*=UTF-8''%s", safe, encoded)
 	}
 	// 非 ASCII 文件名：filename 使用下划线替换非 ASCII 字符作为回退
 	var asciiFallback strings.Builder
@@ -482,7 +544,7 @@ func buildContentDisposition(filename string) string {
 	}
 	safe := strings.ReplaceAll(asciiFallback.String(), `\`, `\\`)
 	safe = strings.ReplaceAll(safe, `"`, `\"`)
-	return fmt.Sprintf("attachment; filename=\"%s\"; filename*=UTF-8''%s", safe, encoded)
+	return fmt.Sprintf("inline; filename=\"%s\"; filename*=UTF-8''%s", safe, encoded)
 }
 
 // isASCII 检查字符串是否全部为 ASCII 字符

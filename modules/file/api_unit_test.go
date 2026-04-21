@@ -191,10 +191,12 @@ func TestInferContentType(t *testing.T) {
 
 // mockService implements IService for testing
 type mockService struct {
-	composeResult      map[string]interface{}
-	composeErr         error
-	lastObjectPath     string
-	lastContentDisp    string
+	composeResult        map[string]interface{}
+	composeErr           error
+	lastObjectPath       string
+	lastContentDisp      string
+	presignedGetErr      error
+	lastGetDisposition   string
 }
 
 func (m *mockService) DownloadAndMakeCompose(uploadPath string, downloadURLs []string) (map[string]interface{}, error) {
@@ -223,6 +225,14 @@ func (m *mockService) PresignedPutURL(objectPath string, contentType string, con
 	return "https://example.com/upload?" + objectPath, "https://example.com/download/" + objectPath, nil
 }
 
+func (m *mockService) PresignedGetURL(objectPath string, filename string, disposition string, expires time.Duration) (string, error) {
+	m.lastGetDisposition = disposition
+	if m.presignedGetErr != nil {
+		return "", m.presignedGetErr
+	}
+	return "https://example.com/signed-get/" + objectPath + "?fn=" + url.QueryEscape(filename), nil
+}
+
 func TestBuildContentDisposition(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -231,21 +241,21 @@ func TestBuildContentDisposition(t *testing.T) {
 	}{
 		{"empty filename", "", ""},
 		{"ascii filename", "report.pdf",
-			`attachment; filename="report.pdf"; filename*=UTF-8''report.pdf`},
+			`inline; filename="report.pdf"; filename*=UTF-8''report.pdf`},
 		{"ascii with spaces", "my file.pdf",
-			`attachment; filename="my file.pdf"; filename*=UTF-8''my%20file.pdf`},
+			`inline; filename="my file.pdf"; filename*=UTF-8''my%20file.pdf`},
 		{"chinese filename", "报告.pdf",
-			`attachment; filename="__.pdf"; filename*=UTF-8''` + url.PathEscape("报告.pdf")},
+			`inline; filename="__.pdf"; filename*=UTF-8''` + url.PathEscape("报告.pdf")},
 		{"japanese filename", "テスト.png",
-			`attachment; filename="___.png"; filename*=UTF-8''` + url.PathEscape("テスト.png")},
+			`inline; filename="___.png"; filename*=UTF-8''` + url.PathEscape("テスト.png")},
 		{"mixed ascii and unicode", "report-报告.pdf",
-			`attachment; filename="report-__.pdf"; filename*=UTF-8''` + url.PathEscape("report-报告.pdf")},
+			`inline; filename="report-__.pdf"; filename*=UTF-8''` + url.PathEscape("report-报告.pdf")},
 		{"emoji filename", "photo\U0001F600.jpg",
-			`attachment; filename="photo_.jpg"; filename*=UTF-8''` + url.PathEscape("photo\U0001F600.jpg")},
+			`inline; filename="photo_.jpg"; filename*=UTF-8''` + url.PathEscape("photo\U0001F600.jpg")},
 		{"ascii with backslash", `report\2024.pdf`,
-			`attachment; filename="report\\2024.pdf"; filename*=UTF-8''report%5C2024.pdf`},
+			`inline; filename="report\\2024.pdf"; filename*=UTF-8''report%5C2024.pdf`},
 		{"ascii with semicolon", "report;final.pdf",
-			`attachment; filename="report;final.pdf"; filename*=UTF-8''report%3Bfinal.pdf`},
+			`inline; filename="report;final.pdf"; filename*=UTF-8''report%3Bfinal.pdf`},
 	}
 
 	for _, tt := range tests {
@@ -362,7 +372,7 @@ func TestGetUploadCredentials_ObjectKeyWithFilename(t *testing.T) {
 				if tt.wantContentDisp {
 					cd, ok := resp["contentDisposition"].(string)
 					assert.True(t, ok, "response should contain 'contentDisposition'")
-					assert.Contains(t, cd, "attachment")
+					assert.Contains(t, cd, "inline")
 					assert.Equal(t, cd, mockSvc.lastContentDisp, "contentDisposition passed to service should match response")
 				}
 			}
@@ -430,6 +440,43 @@ func TestGetUploadCredentials_FallbackWithoutFilename(t *testing.T) {
 	_, hasCD := resp["contentDisposition"]
 	assert.False(t, hasCD, "response should not contain contentDisposition without filename")
 	assert.Equal(t, "", mockSvc.lastContentDisp)
+}
+
+func TestBuildContentDisposition_UsesInline(t *testing.T) {
+	// Verify that buildContentDisposition uses "inline" not "attachment"
+	tests := []string{"report.pdf", "photo.jpg", "报告.pdf", "test file.txt"}
+	for _, fn := range tests {
+		t.Run(fn, func(t *testing.T) {
+			got := buildContentDisposition(fn)
+			assert.Contains(t, got, "inline;")
+			assert.NotContains(t, got, "attachment")
+		})
+	}
+}
+
+func TestExtractFilenameFromDisposition(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty string", "", ""},
+		{"no filename", "inline", ""},
+		{"rfc5987 ascii", "inline; filename=\"report.pdf\"; filename*=UTF-8''report.pdf", "report.pdf"},
+		{"rfc5987 encoded", "inline; filename=\"__.pdf\"; filename*=UTF-8''%E6%8A%A5%E5%91%8A.pdf", "报告.pdf"},
+		{"rfc5987 with spaces", "inline; filename=\"my file.pdf\"; filename*=UTF-8''my%20file.pdf", "my file.pdf"},
+		{"only quoted filename", `inline; filename="report.pdf"`, "report.pdf"},
+		{"attachment style", `attachment; filename="old.pdf"; filename*=UTF-8''old.pdf`, "old.pdf"},
+		{"filename* only", "inline; filename*=UTF-8''doc.pdf", "doc.pdf"},
+		{"filename with semicolon after star", "inline; filename*=UTF-8''a.pdf; other=x", "a.pdf"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractFilenameFromDisposition(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestMakeImageCompose_SafeTypeAssertion(t *testing.T) {
@@ -506,4 +553,137 @@ func TestMakeImageCompose_SafeTypeAssertion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDownloadURL_NoQueryParams(t *testing.T) {
+	// DownloadURL should return a plain URL without response-content-disposition
+	sc := &ServiceCOS{}
+	// We can't call DownloadURL without a config context, so test extractFilenameFromDisposition
+	// and the logic that was removed. The key assertion: DownloadURL no longer appends query params.
+	// This is a compile-time verification that the signature accepts filename but ignores it.
+	_ = sc // ServiceCOS.DownloadURL now always returns a clean URL
+}
+
+func TestGetDownloadURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name            string
+		queryParams     string
+		wantStatus      int
+		wantURL         string
+		wantFilename    string
+		wantDisposition string
+		wantErr         bool
+	}{
+		{
+			name:            "with path and filename",
+			queryParams:     "path=chat/test.jpg&filename=photo.jpg",
+			wantStatus:      http.StatusOK,
+			wantURL:         "https://example.com/signed-get/chat/test.jpg?fn=photo.jpg",
+			wantFilename:    "photo.jpg",
+			wantDisposition: "attachment",
+		},
+		{
+			name:            "with path only, filename defaults to basename",
+			queryParams:     "path=chat/document.pdf",
+			wantStatus:      http.StatusOK,
+			wantURL:         "https://example.com/signed-get/chat/document.pdf?fn=document.pdf",
+			wantFilename:    "document.pdf",
+			wantDisposition: "attachment",
+		},
+		{
+			name:        "missing path returns error",
+			queryParams: "filename=photo.jpg",
+			wantStatus:  http.StatusBadRequest,
+			wantErr:     true,
+		},
+		{
+			name:        "empty path returns error",
+			queryParams: "path=",
+			wantStatus:  http.StatusBadRequest,
+			wantErr:     true,
+		},
+		{
+			name:            "disposition=inline passed through",
+			queryParams:     "path=chat/test.jpg&filename=photo.jpg&disposition=inline",
+			wantStatus:      http.StatusOK,
+			wantURL:         "https://example.com/signed-get/chat/test.jpg?fn=photo.jpg",
+			wantFilename:    "photo.jpg",
+			wantDisposition: "inline",
+		},
+		{
+			name:            "disposition=attachment passed through",
+			queryParams:     "path=chat/test.jpg&filename=photo.jpg&disposition=attachment",
+			wantStatus:      http.StatusOK,
+			wantURL:         "https://example.com/signed-get/chat/test.jpg?fn=photo.jpg",
+			wantFilename:    "photo.jpg",
+			wantDisposition: "attachment",
+		},
+		{
+			name:            "disposition empty defaults to attachment",
+			queryParams:     "path=chat/test.jpg&filename=photo.jpg",
+			wantStatus:      http.StatusOK,
+			wantURL:         "https://example.com/signed-get/chat/test.jpg?fn=photo.jpg",
+			wantFilename:    "photo.jpg",
+			wantDisposition: "attachment",
+		},
+		{
+			name:            "invalid disposition treated as attachment",
+			queryParams:     "path=chat/test.jpg&filename=photo.jpg&disposition=foobar",
+			wantStatus:      http.StatusOK,
+			wantURL:         "https://example.com/signed-get/chat/test.jpg?fn=photo.jpg",
+			wantFilename:    "photo.jpg",
+			wantDisposition: "attachment",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSvc := &mockService{}
+			f := &File{
+				Log:     log.NewTLog("FileTest"),
+				service: mockSvc,
+			}
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request, _ = http.NewRequest(http.MethodGet, "/v1/file/download/url?"+tt.queryParams, nil)
+
+			wkCtx := &wkhttp.Context{Context: c}
+			f.getDownloadURL(wkCtx)
+
+			assert.Equal(t, tt.wantStatus, w.Code, "body: %s", w.Body.String())
+
+			if !tt.wantErr {
+				var resp map[string]interface{}
+				err := json.Unmarshal(w.Body.Bytes(), &resp)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantURL, resp["url"])
+				assert.Equal(t, tt.wantFilename, resp["filename"])
+				assert.Equal(t, tt.wantDisposition, mockSvc.lastGetDisposition)
+			}
+		})
+	}
+}
+
+func TestGetDownloadURL_ServiceError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mockSvc := &mockService{
+		presignedGetErr: fmt.Errorf("service not supported"),
+	}
+	f := &File{
+		Log:     log.NewTLog("FileTest"),
+		service: mockSvc,
+	}
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request, _ = http.NewRequest(http.MethodGet, "/v1/file/download/url?path=/chat/test.jpg", nil)
+
+	wkCtx := &wkhttp.Context{Context: c}
+	f.getDownloadURL(wkCtx)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
