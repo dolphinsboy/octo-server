@@ -1046,15 +1046,11 @@ func (s *Space) updateInvite(c *wkhttp.Context) {
 		return
 	}
 
-	// 解析过期时间
-	var expiresAt *time.Time
-	if req.ExpiresAt != nil && *req.ExpiresAt != "" {
-		t, err := time.Parse("2006-01-02 15:04:05", *req.ExpiresAt)
-		if err != nil {
-			c.ResponseError(errors.New("过期时间格式错误，请使用 2006-01-02 15:04:05 格式"))
-			return
-		}
-		expiresAt = &t
+	// 解析过期时间：与管理端 parseInviteExpiresAt 共用 time.Local 约定，避免双路径写库时区漂移。
+	expiresAt, err := parseInviteExpiresAt(req.ExpiresAt)
+	if err != nil {
+		c.ResponseError(err)
+		return
 	}
 
 	err = s.db.updateInvitation(code, req.MaxUses, expiresAt)

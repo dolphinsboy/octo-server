@@ -816,13 +816,13 @@ func (m *Manager) updateInvite(c *wkhttp.Context) {
 	c.ResponseOK()
 }
 
-// inviteTimeLayout 管理端邀请码 API 的 expires_at 时间格式。
-// 与用户侧 updateInvite (api.go) 保持一致，客户端请求与响应均使用服务器本地时区。
+// inviteTimeLayout 邀请码 API 的 expires_at 时间格式。
+// 用户侧 updateInvite 与管理端 create/updateInvite 共用此常量，避免双写路径漂移。
 const inviteTimeLayout = "2006-01-02 15:04:05"
 
-// parseInviteExpiresAt 解析管理端 expires_at 字符串，空字符串视为未传。
-// 时区采用服务器 time.Local，与用户侧 s.updateInvite 解析行为一致；
-// 这意味着部署环境应显式设置 TZ，避免客户端/服务器时区漂移。
+// parseInviteExpiresAt 解析 expires_at 字符串，空字符串视为未传。
+// 时区采用服务器 time.Local——管理端与用户侧统一共用本函数。
+// 部署环境应显式设置 TZ，确保客户端发送的"服务器本地时间"解释一致。
 func parseInviteExpiresAt(raw *string) (*time.Time, error) {
 	if raw == nil || *raw == "" {
 		return nil, nil

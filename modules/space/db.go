@@ -253,11 +253,6 @@ func (d *DB) queryInvitationByCode(code string) (*InvitationModel, error) {
 	return &m, err
 }
 
-func (d *DB) incrementInviteUsedCount(code string) error {
-	_, err := d.session.UpdateBySql("UPDATE space_invitation SET used_count=used_count+1 WHERE invite_code=?", code).Exec()
-	return err
-}
-
 // incrementInviteUsedCountAtomic atomically increments used_count iff the invite is
 // still valid (status=1, not expired, under max_uses). Filter conditions must stay in
 // sync with queryInvitationByCode so the read→write path keeps the same validity view,
