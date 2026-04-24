@@ -46,19 +46,29 @@ var (
 
 // Add 添加置顶频道。
 //
-// 并发与一致性：
-//   - 唯一索引 uk_user_space_channel 保证 (uid, space_id, channel_id, channel_type) 不会重复，
-//     因此使用 INSERT IGNORE 即可检测重复，无需 SELECT ... FOR UPDATE。
-//   - 数量上限在事务内 "INSERT 后再 COUNT" 检查：若超出上限则回滚。
-//     InnoDB 默认的 REPEATABLE READ 下，COUNT 能看见本事务刚插入的行；
-//     极端并发下两个会话同时插入的总数可能短暂达到 max+1，届时后 commit 的一方
-//     会看到 COUNT > max 并回滚，最终稳定状态仍满足上限。
+// 并发一致性：
+//   - 先 SELECT COUNT(*) ... FOR UPDATE 取当前读并在匹配范围上加 next-key lock，
+//     串行化同一 (uid, space_id) 下的并发插入。REPEATABLE READ 下普通的
+//     一致性读 COUNT 使用事务启动时的快照，看不到其他事务已提交的插入，
+//     因此必须用 FOR UPDATE 保证上限检查的正确性。
+//   - 唯一索引 uk_user_space_channel 配合 INSERT IGNORE 检测重复。
 func (d *PinnedDB) Add(uid, spaceID, channelID string, channelType uint8, maxLimit int) error {
 	tx, err := d.session.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.RollbackUnlessCommitted()
+
+	var count int
+	if _, err := tx.SelectBySql(
+		"SELECT COUNT(*) FROM user_pinned_channel WHERE uid=? AND space_id=? FOR UPDATE",
+		uid, spaceID,
+	).Load(&count); err != nil {
+		return err
+	}
+	if count >= maxLimit {
+		return ErrPinnedLimitExceeded
+	}
 
 	var maxSort int
 	if _, err := tx.SelectBySql(
@@ -75,22 +85,9 @@ func (d *PinnedDB) Add(uid, spaceID, channelID string, channelType uint8, maxLim
 	if err != nil {
 		return err
 	}
-
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
 		return ErrPinnedAlreadyExists
-	}
-
-	var count int
-	if _, err := tx.SelectBySql(
-		"SELECT COUNT(*) FROM user_pinned_channel WHERE uid=? AND space_id=?",
-		uid, spaceID,
-	).Load(&count); err != nil {
-		return err
-	}
-	if count > maxLimit {
-		// 超过上限：事务回滚撤销本次插入。
-		return ErrPinnedLimitExceeded
 	}
 
 	return tx.Commit()
@@ -115,11 +112,11 @@ func (d *PinnedDB) List(uid, spaceID string) ([]*PinnedChannelModel, error) {
 	return list, err
 }
 
-// PinnedSortItem 排序项
+// PinnedSortItem 排序项。SortOrder 由服务端按数组顺序重新分配，
+// 客户端不需要也不应该提交；因此结构体中不包含 SortOrder 字段。
 type PinnedSortItem struct {
 	ChannelID   string `json:"channel_id"`
 	ChannelType uint8  `json:"channel_type"`
-	SortOrder   int    `json:"sort_order"`
 }
 
 // pinnedKey 唯一标识一个置顶频道（uid + space 外部已绑定）
@@ -128,27 +125,40 @@ type pinnedKey struct {
 	ChannelType uint8
 }
 
-// validatePinnedSortItems 校验排序请求：
-//   - items 不能为空
-//   - 不能包含重复的 (channel_id, channel_type)
-//   - 每个 item 必须已被当前用户在当前 Space 下置顶
+// PinnedSortError 表示 UpdateSort 请求参数校验失败，属于客户端错误。
+// handler 可以通过 errors.As 判断并直接把 message 透传给客户端，
+// 以区分 DB/系统错误（走泛化的 "更新排序失败" 提示）。
+type PinnedSortError struct{ msg string }
+
+func (e *PinnedSortError) Error() string { return e.msg }
+
+func newPinnedSortError(msg string) error { return &PinnedSortError{msg: msg} }
+
+// validatePinnedSortItems 校验排序请求。返回的错误（若非 nil）始终是 *PinnedSortError。
 //
-// 该函数为纯函数，便于单元测试。客户端提交的 SortOrder 字段被忽略，
-// 调用方应按数组顺序赋值 sort_order，避免客户端伪造冲突或越界的值。
+// 规则：
+//   - items 不能为空；
+//   - items 中不能有重复的 (channel_id, channel_type)；
+//   - items 必须覆盖当前用户在当前 Space 下的 *全部* 置顶频道，
+//     否则未提交的频道会保留旧 sort_order，与新编号产生冲突；
+//   - 每个 item 必须已被当前用户置顶。
 func validatePinnedSortItems(items []PinnedSortItem, existing map[pinnedKey]struct{}) error {
 	if len(items) == 0 {
-		return errors.New("items 不能为空")
+		return newPinnedSortError("items 不能为空")
 	}
 	seen := make(map[pinnedKey]struct{}, len(items))
 	for _, it := range items {
 		k := pinnedKey{ChannelID: it.ChannelID, ChannelType: it.ChannelType}
 		if _, dup := seen[k]; dup {
-			return errors.New("items 中存在重复的频道")
+			return newPinnedSortError("items 中存在重复的频道")
 		}
 		seen[k] = struct{}{}
 		if _, ok := existing[k]; !ok {
-			return errors.New("提交的频道未置顶或不属于当前用户")
+			return newPinnedSortError("提交的频道未置顶或不属于当前用户")
 		}
+	}
+	if len(items) != len(existing) {
+		return newPinnedSortError("必须提交所有置顶频道")
 	}
 	return nil
 }

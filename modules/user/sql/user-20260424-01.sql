@@ -13,3 +13,7 @@ CREATE TABLE IF NOT EXISTS user_pinned_channel (
   KEY idx_uid_space_sort (uid, space_id, sort_order),
   KEY idx_channel (channel_id, channel_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户置顶频道（Space隔离）';
+
+-- +migrate Down
+
+DROP TABLE IF EXISTS user_pinned_channel;

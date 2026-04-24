@@ -36,6 +36,10 @@ func setGroupMemberChecker(fn GroupMemberCheckFunc) {
 	groupMemberCheckerMu.Unlock()
 }
 
+// getGroupMemberChecker 返回已注册的群成员检查函数。
+// 实践中 checker 仅在模块 init 阶段注册一次，后续不变——RWMutex 主要是
+// 为了消除 init 与首批请求之间的数据竞争；调用方拿到函数值后锁即释放，
+// 不影响函数自身的调用安全。
 func getGroupMemberChecker() GroupMemberCheckFunc {
 	groupMemberCheckerMu.RLock()
 	defer groupMemberCheckerMu.RUnlock()
@@ -227,6 +231,12 @@ func (p *Pinned) UpdateSort(c *wkhttp.Context) {
 	}
 
 	if err := p.db.UpdateSort(loginUID, spaceID, req.Items); err != nil {
+		// 参数校验错误属于客户端问题，原始消息透传给调用方。
+		var ve *PinnedSortError
+		if errors.As(err, &ve) {
+			c.ResponseError(ve)
+			return
+		}
 		p.Error("更新排序失败", zap.Error(err))
 		c.ResponseError(pkgerrors.New("更新排序失败"))
 		return

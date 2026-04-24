@@ -1,6 +1,7 @@
 package user
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
@@ -17,28 +18,30 @@ func TestValidatePinnedSortItems(t *testing.T) {
 	tests := []struct {
 		name    string
 		items   []PinnedSortItem
-		wantErr string
+		wantErr string // 期望错误子串；空串表示不期望错误
 	}{
-		{
-			name: "valid subset",
-			items: []PinnedSortItem{
-				{ChannelID: "c2", ChannelType: 2},
-				{ChannelID: "c1", ChannelType: 1},
-			},
-		},
 		{
 			name: "valid full set",
 			items: []PinnedSortItem{
+				{ChannelID: "c3", ChannelType: 2},
 				{ChannelID: "c1", ChannelType: 1},
 				{ChannelID: "c2", ChannelType: 2},
-				{ChannelID: "c3", ChannelType: 2},
 			},
+		},
+		{
+			name: "partial submit rejected",
+			items: []PinnedSortItem{
+				{ChannelID: "c2", ChannelType: 2},
+				{ChannelID: "c1", ChannelType: 1},
+			},
+			wantErr: "必须提交所有",
 		},
 		{
 			name: "unknown channel rejected",
 			items: []PinnedSortItem{
 				{ChannelID: "c1", ChannelType: 1},
 				{ChannelID: "ghost", ChannelType: 2},
+				{ChannelID: "c3", ChannelType: 2},
 			},
 			wantErr: "未置顶",
 		},
@@ -47,6 +50,7 @@ func TestValidatePinnedSortItems(t *testing.T) {
 			items: []PinnedSortItem{
 				{ChannelID: "c1", ChannelType: 1},
 				{ChannelID: "c1", ChannelType: 1},
+				{ChannelID: "c3", ChannelType: 2},
 			},
 			wantErr: "重复",
 		},
@@ -66,6 +70,9 @@ func TestValidatePinnedSortItems(t *testing.T) {
 			}
 			assert.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
+			// 所有 validator 错误都应可被 PinnedSortError 识别
+			var se *PinnedSortError
+			assert.True(t, errors.As(err, &se), "expected *PinnedSortError, got %T", err)
 		})
 	}
 }
