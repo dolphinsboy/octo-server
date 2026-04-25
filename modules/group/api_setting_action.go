@@ -361,4 +361,25 @@ var groupUpdateActionMap = map[string]groupUpdateActionFnc{
 		// 通知群内成员更新频道
 		return ctx.g.ctx.SendChannelUpdateToGroup(groupNo)
 	},
+	GroupAttrKeyAllowExternal: func(ctx *groupUpdateContext, value interface{}) error { // 是否允许外部成员加入
+		if err := ctx.checkPermissions(); err != nil {
+			return err
+		}
+		val, ok := safeIntFromFloat64(value)
+		if !ok {
+			return errors.New("invalid value type")
+		}
+		if val != 0 && val != 1 {
+			return errors.New("allow_external only accepts 0 or 1")
+		}
+		ctx.groupModel.AllowExternal = val
+		if err := ctx.updateGroup(); err != nil {
+			return err
+		}
+		return ctx.commmitGroupUpdateEvent(GroupAttrKeyAllowExternal, fmt.Sprintf("%d", ctx.groupModel.AllowExternal))
+	},
 }
+
+// GroupAttrKeyAllowExternal 是否允许外部成员加入群的群属性 key。
+// 定义在本模块而非 dmwork-lib.common，因为这是 OCTO 扩展属性，未进入上游 lib。
+const GroupAttrKeyAllowExternal = "allow_external"

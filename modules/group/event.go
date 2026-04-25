@@ -124,11 +124,12 @@ func (g *Group) handleRegisterUserEvent(data []byte, commit config.EventCommit) 
 			return
 		}
 		err = g.db.InsertTx(&Model{
-			GroupNo: g.ctx.GetConfig().Account.SystemGroupID,
-			Name:    g.ctx.GetConfig().Account.SystemGroupName,
-			Creator: g.ctx.GetConfig().Account.SystemUID,
-			Status:  GroupStatusNormal,
-			Version: version,
+			GroupNo:       g.ctx.GetConfig().Account.SystemGroupID,
+			Name:          g.ctx.GetConfig().Account.SystemGroupName,
+			Creator:       g.ctx.GetConfig().Account.SystemUID,
+			Status:        GroupStatusNormal,
+			Version:       version,
+			AllowExternal: 1, // 向后兼容：默认允许外部成员
 		}, tx)
 		if err != nil {
 			g.Error("创建群聊失败")
@@ -272,6 +273,7 @@ func (g *Group) handleOrgOrDeptCreateEvent(data []byte, commit config.EventCommi
 			Invite:              1,
 			AllowViewHistoryMsg: 1,
 			Category:            req.GroupCategory,
+			AllowExternal:       1, // 向后兼容：默认允许外部成员
 		}, tx)
 		if err != nil {
 			g.Error("创建群聊失败")

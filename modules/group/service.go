@@ -157,8 +157,9 @@ func (s *Service) GetCreatedCountWithDate(date string) (int64, error) {
 // AddGroup 添加一个群
 func (s *Service) AddGroup(model *AddGroupReq) error {
 	err := s.db.Insert(&Model{
-		GroupNo: model.GroupNo,
-		Name:    model.Name,
+		GroupNo:       model.GroupNo,
+		Name:          model.Name,
+		AllowExternal: 1, // 向后兼容：默认允许外部成员
 	})
 	return err
 }
@@ -484,6 +485,7 @@ type InfoResp struct {
 	Version             int64     `json:"version"`           // 群数据版本
 	SpaceID             string    `json:"space_id"`          // Space ID
 	IsExternalGroup     int       `json:"is_external_group"` // 是否外部群
+	AllowExternal       int       `json:"allow_external"`    // 是否允许外部成员 1.允许(默认) 0.禁止
 }
 
 func toInfoResp(m *Model) *InfoResp {
@@ -503,6 +505,7 @@ func toInfoResp(m *Model) *InfoResp {
 		Version:             m.Version,
 		SpaceID:             m.SpaceID,
 		IsExternalGroup:     m.IsExternalGroup,
+		AllowExternal:       m.AllowExternal,
 	}
 }
 
@@ -609,6 +612,7 @@ type GroupResp struct {
 	CanManageBotAdmin        bool      `json:"can_manage_bot_admin"`        // 是否可管理Bot管理员
 	SpaceID                  string    `json:"space_id"`                    // Space ID
 	IsExternalGroup          int       `json:"is_external_group"`           // 是否外部群 0.否 1.是
+	AllowExternal            int       `json:"allow_external"`              // 是否允许外部成员 1.允许(默认) 0.禁止
 	CreatedAt                string    `json:"created_at"`
 	UpdatedAt                string    `json:"updated_at"`
 	Version                  int64     `json:"version"` // 群数据版本
@@ -642,6 +646,7 @@ func (g *GroupResp) from(model *DetailModel) *GroupResp {
 		AllowMemberPinnedMessage: model.AllowMemberPinnedMessage,
 		SpaceID:                  model.SpaceID,
 		IsExternalGroup:          model.IsExternalGroup,
+		AllowExternal:            model.AllowExternal,
 		HasGroupMd:               model.GroupMd != nil && *model.GroupMd != "",
 		GroupMdVersion:           model.GroupMdVersion,
 		CreatedAt:                model.CreatedAt.String(),
@@ -669,6 +674,7 @@ func (g *GroupResp) fromModel(model *Model) *GroupResp {
 		AllowMemberPinnedMessage: model.AllowMemberPinnedMessage,
 		SpaceID:                  model.SpaceID,
 		IsExternalGroup:          model.IsExternalGroup,
+		AllowExternal:            model.AllowExternal,
 		HasGroupMd:               model.GroupMd != nil && *model.GroupMd != "",
 		GroupMdVersion:           model.GroupMdVersion,
 		CreatedAt:                model.CreatedAt.String(),
@@ -895,6 +901,7 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 		Version:             version,
 		AllowViewHistoryMsg: int(common.GroupAllowViewHistoryMsgEnabled),
 		SpaceID:             req.SpaceID,
+		AllowExternal:       1, // 向后兼容：默认允许外部成员
 	}, tx)
 	if err != nil {
 		s.Error("insert group record failed", zap.Error(err))
@@ -1091,6 +1098,7 @@ func (s *Service) AddGroupMembers(req *AddGroupMembersServiceReq) (*AddGroupMemb
 	// source_space_id 的确定规则：
 	//   - 若操作者是外部成员，沿用其 source_space_id（同源 Space 邀请）
 	//   - 否则使用被邀请人的默认 Space
+	// 同时当群的 AllowExternal==0 时，非 admin/creator 不能邀请外部成员。
 	externalMap := make(map[string]bool)
 	sourceSpaceMap := make(map[string]string)
 	if groupModel.SpaceID != "" {
@@ -1098,6 +1106,8 @@ func (s *Service) AddGroupMembers(req *AddGroupMembersServiceReq) (*AddGroupMemb
 		if req.OperatorUID != "" {
 			operatorMember, _ = s.db.QueryMemberWithUID(req.OperatorUID, req.GroupNo)
 		}
+		operatorIsManager := operatorMember != nil &&
+			(operatorMember.Role == MemberRoleCreator || operatorMember.Role == MemberRoleManager)
 		for _, uid := range uniqueUIDs {
 			ok, err := spacepkg.CheckMembership(s.ctx.DB(), groupModel.SpaceID, uid)
 			if err != nil {
@@ -1106,6 +1116,10 @@ func (s *Service) AddGroupMembers(req *AddGroupMembersServiceReq) (*AddGroupMemb
 			}
 			if ok {
 				continue
+			}
+			// 群禁止外部成员：只有 admin/creator 可以邀请外部成员
+			if groupModel.AllowExternal == 0 && !operatorIsManager {
+				return nil, errors.New("该群已禁止外部成员加入，只有群主或管理员可邀请外部成员")
 			}
 			externalMap[uid] = true
 			if operatorMember != nil && operatorMember.IsExternal == 1 && operatorMember.SourceSpaceID != "" {

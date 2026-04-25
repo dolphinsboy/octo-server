@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/Mininglamp-OSS/octo-lib/common"
@@ -300,7 +301,12 @@ func (g *Group) groupMemberInviteSure(c *wkhttp.Context) {
 	if err != nil {
 		tx.Rollback()
 		g.Error("添加成员失败！", zap.Error(err))
-		c.ResponseError(errors.New("添加成员失败！"))
+		// 透出 allow_external 等策略拒绝的具体错误，方便管理员定位；其他底层错误走兜底文案
+		if strings.Contains(err.Error(), "禁止外部成员") {
+			c.ResponseError(err)
+		} else {
+			c.ResponseError(errors.New("添加成员失败！"))
+		}
 		return
 	}
 	if err := tx.Commit(); err != nil {

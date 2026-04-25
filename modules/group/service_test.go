@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/testutil"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
 	"github.com/stretchr/testify/assert"
@@ -17,6 +18,32 @@ func setupServiceTest(t *testing.T) (IService, *user.DB) {
 	userDB := user.NewDB(ctx)
 	svc := NewService(ctx)
 	return svc, userDB
+}
+
+// setupServiceTestWithCtx exposes ctx so tests can seed space/space_member/group fixtures directly.
+func setupServiceTestWithCtx(t *testing.T) (IService, *user.DB, *config.Context) {
+	t.Helper()
+	_, ctx := testutil.NewTestServer()
+	err := testutil.CleanAllTables(ctx)
+	assert.NoError(t, err)
+	userDB := user.NewDB(ctx)
+	svc := NewService(ctx)
+	return svc, userDB, ctx
+}
+
+// seedSpaceWithMembers inserts a space + space_member rows for the given uids.
+func seedSpaceWithMembers(t *testing.T, ctx *config.Context, spaceID string, uids ...string) {
+	t.Helper()
+	_, err := ctx.DB().InsertInto("space").
+		Columns("space_id", "name", "creator", "status").
+		Values(spaceID, "test-space-"+spaceID, uids[0], 1).Exec()
+	assert.NoError(t, err)
+	for _, uid := range uids {
+		_, err = ctx.DB().InsertInto("space_member").
+			Columns("space_id", "uid", "role", "status").
+			Values(spaceID, uid, 0, 1).Exec()
+		assert.NoError(t, err)
+	}
 }
 
 func insertTestUsers(t *testing.T, userDB *user.DB, uids ...string) {
@@ -194,4 +221,155 @@ func TestRemoveGroupMembers_SkipCreator(t *testing.T) {
 	})
 	assert.NoError(t, err)
 	assert.Equal(t, 0, removeResp.Removed)
+}
+
+// TestAddGroupMembers_BlocksExternalWhenAllowExternalZero 验证当群 allow_external=0 且
+// 操作者不是管理员/群主时，邀请跨 Space 成员会被拒绝，并返回清晰错误。
+func TestAddGroupMembers_BlocksExternalWhenAllowExternalZero(t *testing.T) {
+	svc, userDB, ctx := setupServiceTestWithCtx(t)
+	// operator m1 属于 spaceA（群所在 Space），external m2 属于 spaceB（跨 Space，属外部）
+	insertTestUsers(t, userDB, testutil.UID, "m1", "m2")
+	spaceA := "space-allowext-a"
+	spaceB := "space-allowext-b"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1")
+	seedSpaceWithMembers(t, ctx, spaceB, "m2")
+
+	// 建群带 spaceA
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1"},
+		Name:    "禁止外部-普通成员邀请",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+
+	// 将 allow_external 关闭，同时把 m1 保持为普通成员（非管理员）
+	s := svc.(*Service)
+	_, err = ctx.DB().Update("group").Set("allow_external", 0).
+		Where("group_no=?", createResp.GroupNo).Exec()
+	assert.NoError(t, err)
+
+	// 普通成员 m1 邀请外部 m2 → 应当被拒绝
+	_, err = svc.AddGroupMembers(&AddGroupMembersServiceReq{
+		GroupNo:      createResp.GroupNo,
+		Members:      []string{"m2"},
+		OperatorUID:  "m1",
+		OperatorName: "user_m1",
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "禁止外部成员")
+
+	// 确认 m2 未进群（不管是新成员还是已删除成员）
+	existingMembers, err := s.db.QueryMembersWithUids([]string{"m2"}, createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Empty(t, existingMembers)
+}
+
+// TestAddGroupMembers_AllowsExternalWhenOperatorIsCreator 验证当群 allow_external=0 时，
+// 群主/管理员仍可邀请外部成员（管理员覆盖）。
+func TestAddGroupMembers_AllowsExternalWhenOperatorIsCreator(t *testing.T) {
+	svc, userDB, ctx := setupServiceTestWithCtx(t)
+	insertTestUsers(t, userDB, testutil.UID, "m1", "m2")
+	spaceA := "space-allowext-a2"
+	spaceB := "space-allowext-b2"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1")
+	seedSpaceWithMembers(t, ctx, spaceB, "m2")
+
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1"},
+		Name:    "禁止外部-群主邀请",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+
+	// 关闭 allow_external
+	_, err = ctx.DB().Update("group").Set("allow_external", 0).
+		Where("group_no=?", createResp.GroupNo).Exec()
+	assert.NoError(t, err)
+
+	// 群主（creator）邀请外部 m2 → 应当允许
+	addResp, err := svc.AddGroupMembers(&AddGroupMembersServiceReq{
+		GroupNo:      createResp.GroupNo,
+		Members:      []string{"m2"},
+		OperatorUID:  testutil.UID,
+		OperatorName: "creator",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 1, addResp.Added)
+
+	// m2 进群且标记为外部
+	s := svc.(*Service)
+	m2, err := s.db.QueryMemberWithUID("m2", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.NotNil(t, m2)
+	assert.Equal(t, 1, m2.IsExternal)
+	assert.Equal(t, spaceB, m2.SourceSpaceID)
+}
+
+// TestAddMembersTx_BlocksExternalForNonManagerOperator 覆盖邀请确认路径：
+// invite=1 模式下非管理员通过邀请流程拉外部成员，allow_external=0 应拒绝。
+func TestAddMembersTx_BlocksExternalForNonManagerOperator(t *testing.T) {
+	svc, userDB, ctx := setupServiceTestWithCtx(t)
+	insertTestUsers(t, userDB, testutil.UID, "m1", "m2")
+	spaceA := "space-allowext-invite-a"
+	spaceB := "space-allowext-invite-b"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1")
+	seedSpaceWithMembers(t, ctx, spaceB, "m2")
+
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1"},
+		Name:    "邀请路径-禁止外部",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+
+	_, err = ctx.DB().Update("group").Set("allow_external", 0).
+		Where("group_no=?", createResp.GroupNo).Exec()
+	assert.NoError(t, err)
+
+	// 直接调用底层 addMembersTx（邀请确认复用此函数）
+	g := New(ctx)
+	tx, err := ctx.DB().Begin()
+	assert.NoError(t, err)
+	_, err = g.addMembersTx([]string{"m2"}, createResp.GroupNo, "m1", "user_m1", tx)
+	_ = tx.Rollback()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "禁止外部成员")
+}
+
+// TestAddGroupMembers_DefaultAllowsExternal 验证默认（allow_external=1）下外部成员可以被邀请，
+// 保持向后兼容。
+func TestAddGroupMembers_DefaultAllowsExternal(t *testing.T) {
+	svc, userDB, ctx := setupServiceTestWithCtx(t)
+	insertTestUsers(t, userDB, testutil.UID, "m1", "m2")
+	spaceA := "space-allowext-a3"
+	spaceB := "space-allowext-b3"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1")
+	seedSpaceWithMembers(t, ctx, spaceB, "m2")
+
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1"},
+		Name:    "默认允许外部",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+
+	// 默认 allow_external=1：普通成员邀请外部也应当成功
+	addResp, err := svc.AddGroupMembers(&AddGroupMembersServiceReq{
+		GroupNo:      createResp.GroupNo,
+		Members:      []string{"m2"},
+		OperatorUID:  "m1",
+		OperatorName: "user_m1",
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 1, addResp.Added)
+
+	s := svc.(*Service)
+	m2, err := s.db.QueryMemberWithUID("m2", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.NotNil(t, m2)
+	assert.Equal(t, 1, m2.IsExternal)
 }

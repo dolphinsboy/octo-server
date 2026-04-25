@@ -273,6 +273,7 @@ func (d *DB) Update(model *Model) error {
 		"forbidden_add_friend":        model.ForbiddenAddFriend,
 		"allow_view_history_msg":      model.AllowViewHistoryMsg,
 		"allow_member_pinned_message": model.AllowMemberPinnedMessage,
+		"allow_external":              model.AllowExternal,
 	}).Where("id=?", model.Id).Exec()
 	return err
 }
@@ -544,6 +545,7 @@ type Model struct {
 	Category                 string     // 群分类
 	SpaceID                  string     // Space ID
 	IsExternalGroup          int        // 外部群 0.否 1.是（自动维护）
+	AllowExternal            int        // 是否允许外部成员加入 1.允许(默认) 0.禁止
 	GroupMd                  *string    // GROUP.md content
 	GroupMdVersion           int64      // GROUP.md version
 	GroupMdUpdatedAt         *time.Time // GROUP.md last update time
