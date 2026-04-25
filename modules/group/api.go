@@ -961,6 +961,36 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 		return nil, errors.New("群成员不存在群里，不能添加别人！")
 	}
 
+	// 外部成员准入校验：与 Service.AddGroupMembers 保持一致。
+	// 当群 allow_external=0 且操作者不是群主/管理员时，禁止把跨 Space 用户加入群。
+	// 该检查覆盖邀请确认（groupMemberInviteSure）等非 Service 路径。
+	groupModel, err := g.db.QueryWithGroupNo(groupNo)
+	if err != nil {
+		g.Error("查询群信息失败", zap.Error(err))
+		return nil, errors.New("查询群信息失败")
+	}
+	if groupModel != nil && groupModel.SpaceID != "" && groupModel.AllowExternal == 0 {
+		operatorMember, opErr := g.db.QueryMemberWithUID(operator, groupNo)
+		if opErr != nil {
+			g.Error("查询操作者群成员失败", zap.Error(opErr))
+			return nil, errors.New("查询操作者群成员失败")
+		}
+		operatorIsManager := operatorMember != nil &&
+			(operatorMember.Role == MemberRoleCreator || operatorMember.Role == MemberRoleManager)
+		if !operatorIsManager {
+			for _, uid := range members {
+				inSpace, spaceErr := spacepkg.CheckMembership(g.ctx.DB(), groupModel.SpaceID, uid)
+				if spaceErr != nil {
+					g.Error("检查 Space 成员失败", zap.Error(spaceErr))
+					return nil, errors.New("检查成员关系失败")
+				}
+				if !inSpace {
+					return nil, errors.New("该群已禁止外部成员加入，只有群主或管理员可邀请外部成员")
+				}
+			}
+		}
+	}
+
 	/**
 	 获取到真实有效的成员信息
 	**/
@@ -1741,6 +1771,11 @@ func (g *Group) groupScanJoin(c *wkhttp.Context) {
 			return
 		}
 		if !inSpace {
+			// 当群禁止外部成员加入时，拒绝跨 Space 扫码入群
+			if group.AllowExternal == 0 {
+				c.ResponseError(errors.New("该群已禁止外部成员加入，请联系群管理员"))
+				return
+			}
 			isExternal = 1
 			sourceSpaceID = spacemod.GetUserDefaultSpaceID(g.ctx, scaner)
 		}

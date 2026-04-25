@@ -758,8 +758,45 @@ func shouldIncludeGroupForSpace(groupSpaceID, searchSpaceID string,
 | 控制 | 作用 |
 |------|------|
 | `invite=1` | 群开启邀请确认 → 管理员审批外部人 |
+| `allow_external=0` | 群级禁止外部成员加入：扫码跨 Space → 拒绝；邀请跨 Space → 仅群主/管理员可绕过（YUJ-27） |
 | `forbidden_add_friend=1` | 禁止群内互加好友 |
 | 通讯录隔离 | 外部成员只能邀请自己 Space 的人 |
+
+#### 6.3.1 `allow_external` 群级开关（YUJ-27 安全强化）
+
+**动机**：`invite=0` 的群默认允许任何 Space 的用户扫码加入。虽然被标记为外部成员，
+但对"绝对不想让外部人进来"的群（例如敏感业务群）缺少显式控制。`allow_external`
+提供一个群级开关，由群主/管理员决定是否接受外部成员。
+
+**迁移**：`modules/group/sql/group_20260425-01.sql`
+
+```sql
+ALTER TABLE `group` ADD COLUMN `allow_external` SMALLINT NOT NULL DEFAULT 1
+  COMMENT 'Allow external members: 1=yes (default, backward-compat), 0=block external scan-join and invite';
+```
+
+**字段**：`Model.AllowExternal`（`group.allow_external`），默认 `1`（允许），向后兼容
+历史数据。API 响应在 `GroupResp.allow_external` / `InfoResp.allow_external` 中暴露。
+
+**行为**（仅当 `group.space_id != ""` 且被操作用户不在该 Space 时生效）：
+
+| 路径 | `allow_external=1`（默认） | `allow_external=0` |
+|------|---------------------------|---------------------|
+| `groupScanJoin` 外部扫码 | 标记为 `is_external=1` 加入 | 拒绝：「该群已禁止外部成员加入，请联系群管理员」 |
+| `AddGroupMembers` 普通成员邀请外部 | 标记为 `is_external=1` 加入 | 拒绝：「该群已禁止外部成员加入，只有群主或管理员可邀请外部成员」 |
+| `AddGroupMembers` 群主/管理员邀请外部 | 正常 | 允许（管理员知情覆盖） |
+| `addMembersTx`（邀请确认 `groupMemberInviteSure` 复用此路径）| 正常 | 以邀请人（operator）角色判定：非管理员携带外部成员时拒绝，管理员可通过 |
+
+**设置入口**：群主/管理员可通过 `PUT /v1/groups/:group_no`（`groupUpdate`）
+发送 `{"allow_external": 0}` 关闭；`GroupAttrKeyAllowExternal = "allow_external"`
+在 `modules/group/api_setting_action.go` 的 `groupUpdateActionMap` 中注册，
+复用既有的 `checkPermissions` 进行权限校验，并通过 `commmitGroupUpdateEvent`
+广播 `allow_external` 字段变更，客户端可据此刷新 UI。
+
+**向后兼容**：
+- 已存在的群（升级前创建）不受影响，`DEFAULT 1` 保留历史行为。
+- 旧群（`space_id == ""`）在 `groupScanJoin` 和 `AddGroupMembers` 中跳过 Space 校验，
+  `allow_external` 路径不会命中。
 
 ---
 
