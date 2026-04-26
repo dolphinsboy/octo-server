@@ -2691,6 +2691,16 @@ func (g *Group) groupExit(c *wkhttp.Context) {
 		if err := sendBotCascadeRemovedTip(g.ctx, groupNo, showName, "离开了", cascadedBotUsers); err != nil {
 			g.Error("发送 bot 级联移除 Tip 失败", zap.Error(err))
 		}
+		// YUJ-52 / Mininglamp-OSS/octo-server#1189 · 级联退群的 bot 也必须清理 thread_member
+		// 和 Space 维度的 pinned，对齐 service.go kick 路径（service.go:1483-1488）。
+		// 顺序放在 tip 之后，与 kick 路径一致。
+		for _, bu := range cascadedBotUsers {
+			if bu == nil {
+				continue
+			}
+			g.removeUserFromGroupThreads(groupNo, bu.UID, groupInfo.SpaceID)
+			user.RemovePinnedForUserInSpace(bu.UID, groupInfo.SpaceID, groupNo, common.ChannelTypeGroup.Uint8())
+		}
 	}
 	// 清理用户在该群的置顶（按 Space 隔离）
 	user.RemovePinnedForUserInSpace(loginUID, groupInfo.SpaceID, groupNo, common.ChannelTypeGroup.Uint8())
