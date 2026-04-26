@@ -41,6 +41,19 @@ func (g *Group) groupMemberInviteAdd(c *wkhttp.Context) {
 		return
 	}
 
+	// Bot Ownership 预校验（YUJ-46 / issue #1181）：在邀请落库之前就拒绝
+	// 非 creator 邀请别人的 bot，避免产生一条"等待管理员审批"的无效邀请。
+	// 真正的兜底在 addMembersTx 里，这里只是为了更友好的错误提示。
+	if botErr := checkBotOwnership(g.ctx.DB(), loginUID, req.UIDS); botErr != nil {
+		if errors.Is(botErr, ErrBotOwnershipDenied) {
+			c.ResponseErrorWithStatus(ErrBotOwnershipDenied, http.StatusForbidden)
+			return
+		}
+		g.Error("检查 Bot 归属失败", zap.Error(botErr))
+		c.ResponseError(errors.New("检查 Bot 归属失败"))
+		return
+	}
+
 	creatorOrManagerUIDS, err := g.db.QueryGroupManagerOrCreatorUIDS(groupNo)
 	if err != nil {
 		g.Error("查询创建者或管理员的uid失败！", zap.String("group_no", groupNo), zap.Error(err))

@@ -899,6 +899,24 @@ func (g *Group) memberAdd(c *wkhttp.Context) {
 		c.ResponseError(errors.New("非群成员不能添加群成员"))
 		return
 	}
+
+	// Bot Ownership 校验（YUJ-46 / issue #1181）：只有 bot 的 creator
+	// 本人能把该 bot 拉入任何群。前端 UI 做过过滤，但后端接口之前完全未
+	// 校验，导致任意群成员可把任意 bot 拉进任意群。策略先保守：
+	// 群主 / 群管理员同样不能跨 creator 邀请 bot；系统 bot / 公共 bot 暂无
+	// 白名单，一律走 creator 路径。参见 checkBotOwnership 函数注释。
+	// 注意：该检查故意放在系统账号 / Invite 模式等策略检查之前，以最小化
+	// 攻击面——非授权方对 bot 的探测请求应尽早被拒绝。
+	if botErr := checkBotOwnership(g.ctx.DB(), operator, req.Members); botErr != nil {
+		if errors.Is(botErr, ErrBotOwnershipDenied) {
+			c.ResponseErrorWithStatus(ErrBotOwnershipDenied, http.StatusForbidden)
+			return
+		}
+		g.Error("检查 Bot 归属失败", zap.Error(botErr))
+		c.ResponseError(errors.New("检查 Bot 归属失败"))
+		return
+	}
+
 	// 判断是否允许系统账号进入群聊
 	appConfig, err := g.commonService.GetAppConfig()
 	if err != nil {
@@ -999,6 +1017,19 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 	}
 	if !exist {
 		return nil, errors.New("群成员不存在群里，不能添加别人！")
+	}
+
+	// Bot Ownership 校验（YUJ-46 / issue #1181）：groupMemberInviteSure 等
+	// 非 Service 路径也会落到 addMembersTx，必须在此处再次拦截，确保
+	// "只有 bot 的 creator 能把 bot 加入群" 这条规则无论走哪个入口都成立。
+	// 此处的 operator 是原始邀请发起者（invite.inviter），与 memberAdd
+	// handler 中的 operator 语义一致。
+	if botErr := checkBotOwnership(g.ctx.DB(), operator, members); botErr != nil {
+		if errors.Is(botErr, ErrBotOwnershipDenied) {
+			return nil, ErrBotOwnershipDenied
+		}
+		g.Error("检查 Bot 归属失败", zap.Error(botErr))
+		return nil, errors.New("检查 Bot 归属失败")
 	}
 
 	// 外部成员准入校验：与 Service.AddGroupMembers 保持一致。
