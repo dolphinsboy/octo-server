@@ -77,9 +77,16 @@ func (s *Space) createMemberEmailInvite(c *wkhttp.Context) {
 	}
 	model.Id = id
 
-	resp := toEmailInviteResp(model)
-	resp.Token = rawToken
-	c.Response(resp)
+	// 异步发邮件：邮件失败不应让创建接口失败，否则前端拿不到 invite ID 也无从重发。
+	// 浅拷贝再传给 goroutine —— 当前 dispatch 与 toEmailInviteResp 都是纯读，
+	// Go 内存模型不会 race，但解耦后任何一方未来加写操作也不会回归 -race。
+	// TODO(#1138 follow-up): admin 多次 create 会触发多封邮件。现阶段沿用项目里
+	// invite-code 创建端点的策略——仅 IP 级 rate limit，无 per-recipient 节流；
+	// 若出现滥用，再叠加 Redis cooldown（与 SendVerifyCode 的 email_rate_limit: 同模式）。
+	invCopy := *model
+	go s.dispatchInviteEmail(&invCopy, rawToken)
+
+	c.Response(toEmailInviteResp(model))
 }
 
 // listMemberEmailInvites 列出空间的 member 类型邀请（全部，不按 creator 过滤——
