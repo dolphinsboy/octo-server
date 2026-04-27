@@ -6,6 +6,7 @@ import (
 
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/testutil"
+	"github.com/Mininglamp-OSS/octo-server/modules/base/event"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
 	"github.com/stretchr/testify/assert"
 )
@@ -442,4 +443,169 @@ func TestAddMembers_BotOnly_DoesNotFlipIsExternalGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 1, gAfterHuman.IsExternalGroup,
 		"human external member must flip is_external_group (正路径未被误杀)")
+}
+
+// ---- YUJ-58 / Fixes Mininglamp-OSS/octo-server#1199 ----
+// 覆盖 CreateGroup 初始成员跨 Space 写入 is_external / source_space_id。
+
+// TestCreateGroup_MarksExternalInitialMember 验证建群初始成员中若存在跨 Space
+// 用户，会被正确标记为 is_external=1，source_space_id=<uid 的默认 Space>，
+// 并把群 is_external_group 同步置为 1。这是 YUJ-53 消息头来源 tag 在"创群
+// 拉人"路径能够渲染的后端根因修复。
+func TestCreateGroup_MarksExternalInitialMember(t *testing.T) {
+	svc, userDB, ctx := setupServiceTestWithCtx(t)
+	insertTestUsers(t, userDB, testutil.UID, "m1", "m-ext")
+	spaceA := "space-createext-a"
+	spaceB := "space-createext-b"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1")
+	seedSpaceWithMembers(t, ctx, spaceB, "m-ext")
+
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1", "m-ext"},
+		Name:    "建群-初始外部成员",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+	assert.Empty(t, createResp.SkippedMembers, "cross-space member should join as external, not be skipped")
+
+	s := svc.(*Service)
+
+	// 内部成员 m1：is_external=0
+	m1, err := s.db.QueryMemberWithUID("m1", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.NotNil(t, m1)
+	assert.Equal(t, 0, m1.IsExternal)
+	assert.Equal(t, "", m1.SourceSpaceID)
+
+	// 外部成员 m-ext：is_external=1 + source_space_id=spaceB
+	mExt, err := s.db.QueryMemberWithUID("m-ext", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.NotNil(t, mExt)
+	assert.Equal(t, 1, mExt.IsExternal)
+	assert.Equal(t, spaceB, mExt.SourceSpaceID)
+
+	// 群 is_external_group 同步被 flip 到 1（人类外部成员）
+	g, err := s.db.QueryWithGroupNo(createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, g.IsExternalGroup,
+		"human external initial member must flip is_external_group on create")
+}
+
+// TestCreateGroup_InternalOnly_KeepsGroupNonExternal 保底验证：当建群初始成员
+// 全部在群 Space 中时，不会误写 is_external / is_external_group。
+func TestCreateGroup_InternalOnly_KeepsGroupNonExternal(t *testing.T) {
+	svc, userDB, ctx := setupServiceTestWithCtx(t)
+	insertTestUsers(t, userDB, testutil.UID, "m1", "m2")
+	spaceA := "space-createint-a"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1", "m2")
+
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1", "m2"},
+		Name:    "建群-纯内部",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+
+	s := svc.(*Service)
+	m1, err := s.db.QueryMemberWithUID("m1", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, m1.IsExternal)
+	m2, err := s.db.QueryMemberWithUID("m2", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, m2.IsExternal)
+
+	g, err := s.db.QueryWithGroupNo(createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, g.IsExternalGroup)
+}
+
+// TestCreateGroup_BotOnlyExternal_DoesNotFlipIsExternalGroup 与 ADD / DELETE
+// 路径保持对称：仅一个跨 Space bot 作为初始成员时，不应 flip 群标记。
+func TestCreateGroup_BotOnlyExternal_DoesNotFlipIsExternalGroup(t *testing.T) {
+	svc, userDB, ctx := setupServiceTestWithCtx(t)
+	insertTestUsers(t, userDB, testutil.UID, "m1")
+	err := userDB.Insert(&user.Model{
+		UID:     "bot-ext",
+		Name:    "bot_ext",
+		ShortNo: "sn_botext",
+		Robot:   1,
+	})
+	assert.NoError(t, err)
+
+	spaceA := "space-createbot-a"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1")
+
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1", "bot-ext"},
+		Name:    "建群-仅外部bot",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+
+	s := svc.(*Service)
+	botMember, err := s.db.QueryMemberWithUID("bot-ext", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, botMember.IsExternal)
+	assert.Equal(t, 1, botMember.Robot)
+
+	g, err := s.db.QueryWithGroupNo(createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, g.IsExternalGroup,
+		"cross-space bot at creation must NOT flip is_external_group (symmetric with ADD path)")
+}
+
+// TestAddMembersTx_MarksExternalMember 验证邀请确认路径（invite/sure → addMembersTx）
+// 也会正确写入 is_external / source_space_id，补齐 YUJ-53 UI tag 渲染链路。
+//
+// NOTE: addMembersTx 走 ctx.Event.EventBegin/EventCommit 持久化事件记录，
+// 但当前 testutil.NewTestServer 不初始化 ctx.Event，且测试 DB 不建 `event` 表
+// （参见 api_scanjoin_bot_test.go 的同类跳过注释）。
+// is_external 分支逻辑与 Service.AddGroupMembers 完全对称，并由
+// TestAddGroupMembers_AllowsExternalWhenOperatorIsCreator 等用例覆盖；
+// 本用例保留为 doc/skip 形式，待 testutil 补齐 event 事件基础设施后可去掉 Skip。
+func TestAddMembersTx_MarksExternalMember(t *testing.T) {
+	t.Skip("addMembersTx 依赖未在 testutil 初始化的 ctx.Event；" +
+		"is_external 赋值逻辑与 Service.AddGroupMembers 等价并由其单测覆盖。")
+	_, userDB, ctx := setupServiceTestWithCtx(t)
+	// addMembersTx 依赖 ctx.Event（EventBegin/EventCommit）
+	ctx.Event = event.New(ctx)
+	insertTestUsers(t, userDB, testutil.UID, "m1", "m-ext")
+	spaceA := "space-addtx-a"
+	spaceB := "space-addtx-b"
+	seedSpaceWithMembers(t, ctx, spaceA, testutil.UID, "m1")
+	seedSpaceWithMembers(t, ctx, spaceB, "m-ext")
+
+	svc := NewService(ctx).(*Service)
+	createResp, err := svc.CreateGroup(&CreateGroupServiceReq{
+		Creator: testutil.UID,
+		Members: []string{"m1"},
+		Name:    "invite-sure-ext",
+		SpaceID: spaceA,
+	})
+	assert.NoError(t, err)
+
+	g := New(ctx)
+	tx, err := ctx.DB().Begin()
+	assert.NoError(t, err)
+	commitCb, err := g.addMembersTx([]string{"m-ext"}, createResp.GroupNo, "m1", "user_m1", tx)
+	assert.NoError(t, err)
+	err = tx.Commit()
+	assert.NoError(t, err)
+	if commitCb != nil {
+		commitCb()
+	}
+
+	mExt, err := svc.db.QueryMemberWithUID("m-ext", createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.NotNil(t, mExt)
+	assert.Equal(t, 1, mExt.IsExternal, "invite/sure path must mark cross-space as external")
+	assert.Equal(t, spaceB, mExt.SourceSpaceID)
+
+	gAfter, err := svc.db.QueryWithGroupNo(createResp.GroupNo)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, gAfter.IsExternalGroup,
+		"human external member via invite/sure must flip is_external_group")
 }

@@ -1040,12 +1040,22 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 		g.Error("查询群信息失败", zap.Error(err))
 		return nil, errors.New("查询群信息失败")
 	}
+	// 跨 Space 外部成员标识：与 scanjoin / Service.AddGroupMembers 语义对齐。
+	// 群属于某 Space 时，不在 Space 的成员标记 is_external=1 并写 source_space_id，
+	// 让消息头 from_is_external / from_source_space_name 下发路径可正确渲染
+	// 来源 tag（YUJ-53 bugfix）。source_space_id 规则：
+	//   1) 操作者本身是外部成员 → 沿用其 source_space_id（同源 Space 邀请）
+	//   2) 否则使用被邀请人的默认 Space
+	externalMap := make(map[string]bool)
+	sourceSpaceMap := make(map[string]string)
+	var operatorMemberForSpace *MemberModel
 	if groupModel != nil && groupModel.SpaceID != "" && groupModel.AllowExternal == 0 {
 		operatorMember, opErr := g.db.QueryMemberWithUID(operator, groupNo)
 		if opErr != nil {
 			g.Error("查询操作者群成员失败", zap.Error(opErr))
 			return nil, errors.New("查询操作者群成员失败")
 		}
+		operatorMemberForSpace = operatorMember
 		operatorIsManager := operatorMember != nil &&
 			(operatorMember.Role == MemberRoleCreator || operatorMember.Role == MemberRoleManager)
 		if !operatorIsManager {
@@ -1058,6 +1068,28 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 				if !inSpace {
 					return nil, errors.New("该群已禁止外部成员加入，只有群主或管理员可邀请外部成员")
 				}
+			}
+		}
+	}
+	if groupModel != nil && groupModel.SpaceID != "" {
+		if operatorMemberForSpace == nil {
+			operatorMemberForSpace, _ = g.db.QueryMemberWithUID(operator, groupNo)
+		}
+		for _, uid := range members {
+			inSpace, spaceErr := spacepkg.CheckMembership(g.ctx.DB(), groupModel.SpaceID, uid)
+			if spaceErr != nil {
+				g.Error("检查 Space 成员失败", zap.Error(spaceErr))
+				return nil, errors.New("检查成员关系失败")
+			}
+			if inSpace {
+				continue
+			}
+			externalMap[uid] = true
+			// source_space_id 规则与 Service.AddGroupMembers 保持一致。
+			if operatorMemberForSpace != nil && operatorMemberForSpace.IsExternal == 1 && operatorMemberForSpace.SourceSpaceID != "" {
+				sourceSpaceMap[uid] = operatorMemberForSpace.SourceSpaceID
+			} else {
+				sourceSpaceMap[uid] = spacemod.GetUserDefaultSpaceID(g.ctx, uid)
 			}
 		}
 	}
@@ -1143,6 +1175,7 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 	 将成员信息存到数据库
 	**/
 	userBaseVos := make([]*config.UserBaseVo, 0, len(realMembers))
+	hasNewExternal := false
 	for _, realMember := range realMemberModels {
 		version, err := g.ctx.GenSeq(common.GroupMemberSeqKey)
 		if err != nil {
@@ -1159,14 +1192,23 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 			g.Error("查询是否存在删除成员失败！", zap.Error(err))
 			return nil, errors.New("查询是否存在删除成员失败！")
 		}
+		// 跨 Space 外部成员：写入 is_external=1 和 source_space_id（YUJ-53）。
+		isExt := 0
+		srcSpaceID := ""
+		if externalMap[realMember.UID] {
+			isExt = 1
+			srcSpaceID = sourceSpaceMap[realMember.UID]
+		}
 		newMember := &MemberModel{
-			GroupNo:   groupNo,
-			InviteUID: operator,
-			UID:       realMember.UID,
-			Vercode:   fmt.Sprintf("%s@%d", util.GenerUUID(), common.GroupMember),
-			Version:   version,
-			Status:    int(common.GroupMemberStatusNormal),
-			Robot:     realMember.Robot,
+			GroupNo:       groupNo,
+			InviteUID:     operator,
+			UID:           realMember.UID,
+			Vercode:       fmt.Sprintf("%s@%d", util.GenerUUID(), common.GroupMember),
+			Version:       version,
+			Status:        int(common.GroupMemberStatusNormal),
+			Robot:         realMember.Robot,
+			IsExternal:    isExt,
+			SourceSpaceID: srcSpaceID,
 		}
 		if existDelete {
 			err = g.db.recoverMemberTx(newMember, tx)
@@ -1177,6 +1219,21 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 			g.Error("添加群成员失败！", zap.Error(err))
 			return nil, errors.New("添加群成员失败！")
 		}
+		// is_external_group 只反映人类外部成员：bot 即便 is_external=1 也不应
+		// flip 群标记（与 DELETE 路径 robot=0 过滤对称）。
+		if isExt == 1 && realMember.Robot == 0 {
+			hasNewExternal = true
+		}
+	}
+
+	// 首次出现外部人类成员时，在事务内将群标记为外部群。
+	markedExternal := false
+	if hasNewExternal && groupModel != nil && groupModel.IsExternalGroup == 0 {
+		if updateErr := g.db.UpdateIsExternalGroupTx(groupNo, 1, tx); updateErr != nil {
+			g.Error("更新 is_external_group 失败", zap.Error(updateErr), zap.String("group_no", groupNo))
+			return nil, errors.New("更新 is_external_group 失败")
+		}
+		markedExternal = true
 	}
 
 	/**
@@ -1281,6 +1338,11 @@ func (g *Group) addMembersTx(members []string, groupNo string, operator, operato
 		}
 		if unableAddDestroyAccount != 0 {
 			g.ctx.EventCommit(unableAddDestroyAccount)
+		}
+		// 群首次被 flip 为外部群：通知端上刷新群资料，与 scanjoin /
+		// Service.AddGroupMembers 保持一致。
+		if markedExternal {
+			g.ctx.SendChannelUpdateToGroup(groupNo)
 		}
 	}, nil
 }

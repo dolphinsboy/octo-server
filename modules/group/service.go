@@ -823,6 +823,10 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 	}
 
 	var skippedMembers []string
+	// 跨 Space 外部成员标识：key=uid, value=source_space_id（uid 的默认 Space）
+	// 只有 req.SpaceID 非空时才会被填充——群归属 Space 时，非 Space 成员被视为外部成员。
+	externalMap := make(map[string]bool)
+	sourceSpaceMap := make(map[string]string)
 
 	// Space 校验
 	if req.SpaceID != "" {
@@ -845,7 +849,10 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 		if !creatorOk {
 			return nil, errors.New("creator is not a member of this space")
 		}
-		validMembers := make([]string, 0, len(req.Members))
+		// 初始成员：不在群 Space 的成员视为外部成员并标记 is_external / source_space_id，
+		// 行为与 scanjoin / AddGroupMembers 路径对齐，保证 YUJ-53 消息头来源 tag 在
+		// 建群初始成员路径也能被正确渲染。建群暂不做 allow_external 门禁，默认允许（与
+		// 新群 allow_external=1 一致）；若未来需要拒绝，应由 API 层提前校验。
 		for _, uid := range req.Members {
 			ok, err := spacepkg.CheckMembership(s.ctx.DB(), req.SpaceID, uid)
 			if err != nil {
@@ -853,15 +860,14 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 				return nil, errors.New("failed to check space membership")
 			}
 			if ok {
-				validMembers = append(validMembers, uid)
-			} else {
-				skippedMembers = append(skippedMembers, uid)
+				continue
 			}
+			externalMap[uid] = true
+			// source_space_id 可能为空（用户未属于任何 Space，如无 Space 的 bot），
+			// 与 Service.AddGroupMembers 语义保持一致——仍以外部成员入群，
+			// source_space_name 在下发时若为空则 UI 不渲染来源 tag。
+			sourceSpaceMap[uid] = spacemod.GetUserDefaultSpaceID(s.ctx, uid)
 		}
-		if len(validMembers) == 0 {
-			return nil, errors.New("none of the members belong to this space")
-		}
-		req.Members = validMembers
 	}
 
 	// 查询创建者用户信息
@@ -927,6 +933,22 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 	defer tx.RollbackUnlessCommitted()
 
 	// 插入群记录
+	// 如果初始成员中存在人类外部成员，同步把群标记为外部群，保持 group 与
+	// group_member 的 is_external_* 标记在同一事务内一致（与 ADD / DELETE
+	// 路径对称，bot-only 外部不会 flip 群标记）。
+	isExternalGroup := 0
+	for _, memberUser := range memberUsers {
+		if memberUser.UID == req.Creator {
+			continue
+		}
+		if req.BotUID != "" && memberUser.UID == req.BotUID {
+			continue
+		}
+		if externalMap[memberUser.UID] && memberUser.Robot == 0 {
+			isExternalGroup = 1
+			break
+		}
+	}
 	err = s.db.InsertTx(&Model{
 		GroupNo:             groupNo,
 		Name:                groupName,
@@ -936,6 +958,7 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 		AllowViewHistoryMsg: int(common.GroupAllowViewHistoryMsgEnabled),
 		SpaceID:             req.SpaceID,
 		AllowExternal:       1, // 向后兼容：默认允许外部成员
+		IsExternalGroup:     isExternalGroup,
 	}, tx)
 	if err != nil {
 		s.Error("insert group record failed", zap.Error(err))
@@ -962,15 +985,26 @@ func (s *Service) CreateGroup(req *CreateGroupServiceReq) (*CreateGroupServiceRe
 		if memberUser.UID == req.Creator {
 			role = MemberRoleCreator
 		}
+		// 跨 Space 外部成员：写入 is_external=1 和 source_space_id，保证
+		// 消息头 from_is_external / from_source_space_name 在建群初始成员
+		// 路径也能正确下发（YUJ-53 UI 来源 tag 渲染依赖）。
+		isExt := 0
+		srcSpaceID := ""
+		if externalMap[memberUser.UID] {
+			isExt = 1
+			srcSpaceID = sourceSpaceMap[memberUser.UID]
+		}
 		err = s.db.InsertMemberTx(&MemberModel{
-			GroupNo:   groupNo,
-			UID:       memberUser.UID,
-			Role:      role,
-			Version:   memberVersion,
-			InviteUID: req.Creator,
-			Robot:     memberUser.Robot,
-			Status:    int(common.GroupMemberStatusNormal),
-			Vercode:   fmt.Sprintf("%s@%d", util.GenerUUID(), common.GroupMember),
+			GroupNo:       groupNo,
+			UID:           memberUser.UID,
+			Role:          role,
+			Version:       memberVersion,
+			InviteUID:     req.Creator,
+			Robot:         memberUser.Robot,
+			Status:        int(common.GroupMemberStatusNormal),
+			Vercode:       fmt.Sprintf("%s@%d", util.GenerUUID(), common.GroupMember),
+			IsExternal:    isExt,
+			SourceSpaceID: srcSpaceID,
 		}, tx)
 		if err != nil {
 			s.Error("insert member failed", zap.Error(err), zap.String("uid", memberUser.UID))
