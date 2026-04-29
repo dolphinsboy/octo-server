@@ -56,6 +56,40 @@ func TestUpdateSetting_InsertAndUpdateMute(t *testing.T) {
 	assert.Equal(t, 0, settings[0].Mute)
 }
 
+// TestGetThread_ReturnsMuteForLoginUID 验证 GetThread 返回当前登录用户的 mute 状态
+func TestGetThread_ReturnsMuteForLoginUID(t *testing.T) {
+	svc, groupNo := setupServiceTestData(t)
+	thread, err := svc.CreateThread(&CreateThreadReq{
+		GroupNo: groupNo, Name: "s1", CreatorUID: testutil.UID, CreatorName: "用户1",
+	})
+	assert.NoError(t, err)
+
+	// 未设置时默认 0
+	resp, err := svc.GetThread(groupNo, thread.ShortID, testutil.UID)
+	assert.NoError(t, err)
+	assert.Equal(t, 0, resp.Mute)
+
+	// 设置 mute=1 后应返回 1
+	err = svc.UpdateSetting(groupNo, thread.ShortID, testutil.UID, map[string]interface{}{
+		"mute": float64(1),
+	})
+	assert.NoError(t, err)
+
+	resp, err = svc.GetThread(groupNo, thread.ShortID, testutil.UID)
+	assert.NoError(t, err)
+	assert.Equal(t, 1, resp.Mute)
+
+	// loginUID 为空时不查询 setting，Mute 为零值
+	resp, err = svc.GetThread(groupNo, thread.ShortID, "")
+	assert.NoError(t, err)
+	assert.Equal(t, 0, resp.Mute)
+
+	// 其他用户读取应得到自己的设置（默认 0），不串号
+	resp, err = svc.GetThread(groupNo, thread.ShortID, "other-uid")
+	assert.NoError(t, err)
+	assert.Equal(t, 0, resp.Mute)
+}
+
 func TestUpdateSetting_InvalidMuteValue(t *testing.T) {
 	svc, groupNo := setupServiceTestData(t)
 	thread, err := svc.CreateThread(&CreateThreadReq{

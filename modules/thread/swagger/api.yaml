@@ -502,6 +502,10 @@ definitions:
         format: int64
       thread_md_updated_at:
         type: string
+      mute:
+        type: integer
+        enum: [0, 1]
+        description: 当前登录用户的免打扰状态，0=未静音，1=静音。仅单条详情接口填充，列表接口始终为 0。
       created_at:
         type: string
       updated_at:

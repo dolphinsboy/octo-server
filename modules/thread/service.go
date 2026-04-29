@@ -38,8 +38,8 @@ type IService interface {
 	UpdateName(groupNo, shortID, operatorUID, name string) error
 	// GetThreads 分页获取群下的子区，同时返回总数
 	GetThreads(groupNo string, pageIndex, pageSize int64) ([]*ThreadResp, int64, error)
-	// GetThread 获取子区详情
-	GetThread(groupNo, shortID string) (*ThreadResp, error)
+	// GetThread 获取子区详情，loginUID 非空时填充当前用户的 mute 状态
+	GetThread(groupNo, shortID, loginUID string) (*ThreadResp, error)
 	// ArchiveThread 归档子区
 	ArchiveThread(groupNo, shortID, operatorUID string) error
 	// UnarchiveThread 取消归档
@@ -132,8 +132,9 @@ type ThreadResp struct {
 	HasThreadMd       bool   `json:"has_thread_md"`
 	ThreadMdVersion   int64  `json:"thread_md_version"`
 	ThreadMdUpdatedAt string `json:"thread_md_updated_at"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
+	Mute      int    `json:"mute"` // 当前用户免打扰状态，仅 GetThread 填充
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // MemberResp 子区成员响应
@@ -460,7 +461,7 @@ func (s *Service) GetThreads(groupNo string, pageIndex, pageSize int64) ([]*Thre
 }
 
 // GetThread 获取子区详情
-func (s *Service) GetThread(groupNo, shortID string) (*ThreadResp, error) {
+func (s *Service) GetThread(groupNo, shortID, loginUID string) (*ThreadResp, error) {
 	thread, err := s.db.QueryByGroupNoAndShortID(groupNo, shortID)
 	if err != nil {
 		return nil, fmt.Errorf("query thread: %w", err)
@@ -474,6 +475,18 @@ func (s *Service) GetThread(groupNo, shortID string) (*ThreadResp, error) {
 	resp := s.toThreadResp(thread)
 	if groupInfo, err := s.groupService.GetGroupWithGroupNo(groupNo); err == nil && groupInfo != nil {
 		resp.GroupName = groupInfo.Name
+	}
+	if loginUID != "" {
+		setting, err := s.db.QuerySetting(groupNo, shortID, loginUID)
+		if err != nil {
+			s.Warn("查询子区免打扰设置失败，mute 字段降级为 0",
+				zap.Error(err),
+				zap.String("groupNo", groupNo),
+				zap.String("shortID", shortID),
+				zap.String("loginUID", loginUID))
+		} else if setting != nil {
+			resp.Mute = setting.Mute
+		}
 	}
 	return resp, nil
 }

@@ -139,7 +139,7 @@ func (bf *BotFather) botGetThread(c *wkhttp.Context) {
 		return
 	}
 
-	resp, err := bf.threadService.GetThread(groupNo, shortID)
+	resp, err := bf.threadService.GetThread(groupNo, shortID, "")
 	if err != nil {
 		bf.Error("获取子区详情失败", zap.Error(err), zap.String("groupNo", groupNo), zap.String("shortID", shortID))
 		c.ResponseError(err)

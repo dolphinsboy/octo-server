@@ -324,7 +324,7 @@ func (t *Thread) getThread(c *wkhttp.Context) {
 		return
 	}
 
-	thread, err := t.service.GetThread(groupNo, shortID)
+	thread, err := t.service.GetThread(groupNo, shortID, loginUID)
 	if err != nil {
 		t.Error("获取子区详情失败", zap.Error(err), zap.String("groupNo", groupNo), zap.String("shortID", shortID))
 		c.ResponseError(err)
@@ -832,7 +832,7 @@ func (t *Thread) getThreadSimple(c *wkhttp.Context) {
 		return
 	}
 
-	resp, err := t.service.GetThread(thread.GroupNo, shortID)
+	resp, err := t.service.GetThread(thread.GroupNo, shortID, loginUID)
 	if err != nil {
 		c.ResponseError(err)
 		return

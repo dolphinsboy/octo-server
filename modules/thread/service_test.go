@@ -556,7 +556,7 @@ func TestUpdateName(t *testing.T) {
 	assert.NoError(t, err)
 
 	// 验证名称已更新
-	updated, err := svc.GetThread(groupNo, thread.ShortID)
+	updated, err := svc.GetThread(groupNo, thread.ShortID, testutil.UID)
 	assert.NoError(t, err)
 	assert.Equal(t, "新名称", updated.Name)
 }
