@@ -164,6 +164,63 @@ func TestUserList(t *testing.T) {
 	s.GetRoute().ServeHTTP(w, req)
 	assert.Equal(t, true, strings.Contains(w.Body.String(), `"name":"222"`))
 }
+func TestUserListByUsernameKeyword(t *testing.T) {
+	s, ctx := testutil.NewTestServer()
+	m := NewManager(ctx)
+	err := testutil.CleanAllTables(ctx)
+	assert.NoError(t, err)
+
+	err = ctx.Cache().Set(ctx.GetConfig().Cache.TokenCachePrefix+testutil.Token, testutil.UID+"@test@"+string(wkhttp.SuperAdmin))
+	assert.NoError(t, err)
+
+	err = m.userDB.Insert(&Model{
+		UID:      util.GenerUUID(),
+		ShortNo:  util.GenerUUID(),
+		Phone:    "13800000001",
+		Username: "alice@example.com",
+		Name:     "alice",
+		Status:   1,
+		Password: util.MD5(util.MD5("111")),
+	})
+	assert.NoError(t, err)
+	err = m.userDB.Insert(&Model{
+		UID:      util.GenerUUID(),
+		ShortNo:  util.GenerUUID(),
+		Phone:    "13800000002",
+		Username: "bob@example.com",
+		Name:     "bob",
+		Status:   1,
+		Password: util.MD5(util.MD5("222")),
+	})
+	assert.NoError(t, err)
+
+	cases := []struct {
+		name        string
+		keyword     string
+		wantSubstr  string
+		wantMissing string
+	}{
+		{"exact username", "alice@example.com", `"username":"alice@example.com"`, `"username":"bob@example.com"`},
+		{"partial username", "bob@", `"username":"bob@example.com"`, `"username":"alice@example.com"`},
+		{"no match", "nobody@nowhere", "", `"username":"alice@example.com"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", "/v1/manager/user/list?page_index=1&page_size=10&keyword="+tc.keyword, nil)
+			req.Header.Set("token", testutil.Token)
+			s.GetRoute().ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+			body := w.Body.String()
+			if tc.wantSubstr != "" {
+				assert.Contains(t, body, tc.wantSubstr)
+			}
+			if tc.wantMissing != "" {
+				assert.NotContains(t, body, tc.wantMissing)
+			}
+		})
+	}
+}
 func TestUserDisablelist(t *testing.T) {
 	s, ctx := testutil.NewTestServer()
 	m := NewManager(ctx)
