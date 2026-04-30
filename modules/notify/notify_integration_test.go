@@ -1141,3 +1141,39 @@ func TestMemberCache_Verify_EmptyTargets(t *testing.T) {
 	assert.Empty(t, members)
 	assert.Empty(t, filtered)
 }
+
+// TestNotifyBotUID_FitsUserUIDColumn guards against the 2026-04-30 production incident
+// where NotifyBotUID generated uids longer than user.uid VARCHAR(40), causing MySQL
+// error 1406 on every bot creation (3h / 786 errors, module non-functional).
+//
+// PR #1263 shortened format to "ntf_{spaceID}" but the constraint is not structurally
+// enforced. This test locks the invariant: NotifyBotUID(any_real_space_id) <= 40.
+func TestNotifyBotUID_FitsUserUIDColumn(t *testing.T) {
+	const userUIDColumnLimit = 40 // user.uid VARCHAR(40) — keep in sync with DDL
+
+	t.Run("UUID standard format (36 chars with hyphens)", func(t *testing.T) {
+		spaceID := util.GenerUUID() // repo's canonical spaceID generator
+		uid := NotifyBotUID(spaceID)
+		require.LessOrEqualf(t, len(uid), userUIDColumnLimit,
+			"NotifyBotUID(%q)=%q (%d chars) exceeds user.uid VARCHAR(%d)",
+			spaceID, uid, len(uid), userUIDColumnLimit)
+	})
+
+	t.Run("max-length spaceID upper bound", func(t *testing.T) {
+		// Real spaceIDs come from util.GenerUUID() — always 36 chars.
+		// Construct a deliberately long spaceID to catch format drift if someone
+		// ever switches the generator or composes spaceIDs.
+		spaceID := strings.Repeat("a", 36)
+		uid := NotifyBotUID(spaceID)
+		require.LessOrEqualf(t, len(uid), userUIDColumnLimit,
+			"format drift: NotifyBotUID produces %d-char uid for 36-char spaceID", len(uid))
+	})
+
+	t.Run("format is stable (regression lock)", func(t *testing.T) {
+		// PR #1263 established the format `ntf_{spaceID}`. If this changes,
+		// re-verify the length math before removing this assertion.
+		uid := NotifyBotUID("abc-def-ghi")
+		require.Equal(t, "ntf_abc-def-ghi", uid,
+			"NotifyBotUID format changed — re-verify user.uid VARCHAR(40) still fits")
+	})
+}
