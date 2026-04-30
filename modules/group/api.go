@@ -2088,7 +2088,28 @@ func (g *Group) groupScanJoin(c *wkhttp.Context) {
 		g.ctx.EventCommit(groupAvatarEventID)
 	}
 
-	c.ResponseOK()
+	// YUJ-170 / dmwork-web#1100：scanjoin 成功响应直接回带群所属 Space 信息。
+	// 替换原 ResponseOK() 的空载，为 H5 join_group.html 提供 crossSpace 判定数据，
+	// 避免再次调 /detail（非成员首次会 403；成员二次调虽 200 但多了一次往返）。
+	// - space_id：群所属 Space ID，H5 与 localStorage.currentSpaceId 比对判断是否跨 Space
+	// - space_name：展示用（"位于 xxx 空间"），私群为空串
+	// - group_no / group_name：冗余便于 H5 写 sessionStorage payload 无需依赖全局变量
+	// 私群（SpaceID=""）/ GetSpaceName 失败 → 空串降级，H5 据空串跳过 notice 写入。
+	spaceName, spaceNameErr := spacepkg.GetSpaceName(g.ctx.DB(), group.SpaceID)
+	if spaceNameErr != nil {
+		g.Warn("scanjoin 成功但查询 Space 名称失败（降级为空串，不阻塞入群）",
+			zap.String("space_id", group.SpaceID),
+			zap.String("group_no", groupNo),
+			zap.Error(spaceNameErr))
+		spaceName = ""
+	}
+	c.Response(gin.H{
+		"status":     http.StatusOK,
+		"group_no":   groupNo,
+		"group_name": group.Name,
+		"space_id":   group.SpaceID,
+		"space_name": spaceName,
+	})
 }
 
 // 群主转让

@@ -80,11 +80,39 @@
         })
         $("#ok").click(function(){
             $.getJSON(`${apiURL}groups/${groupNo}/scanjoin?auth_code=${code}`).then(function(resp){
+                // YUJ-170 / dmwork-web#1100: 跨 Space 加群引导。
+                // groupScanJoin 成功响应直接回带 space_id / space_name / group_name（YUJ-170
+                // 新增字段），避免 /detail 二次往返（非成员首次调 /detail 会 403，成员二次调
+                // 又多一次 round-trip）。
+                // 若当前端视角 Space 与群所属 Space 不一致，写 sessionStorage.pendingJoinSuccessNotice
+                // （YUJ-106 契约 key），Web 首页 MainPage consumeJoinSuccessNotice + showJoinSuccessToast
+                // 按 kind='group' 渲染「已加入「<群名> 群聊」/ 位于「<Space 名> 空间」/ 切换过去 →」。
+                // 纯内联 JS，不引入 npm / 构建依赖。
+                try {
+                    var groupSpaceId = (resp && resp.space_id) ? resp.space_id : '';
+                    var prevSpaceId = '';
+                    try { prevSpaceId = localStorage.getItem('currentSpaceId') || ''; } catch (e) { /* best-effort */ }
+                    if (groupSpaceId && prevSpaceId && groupSpaceId !== prevSpaceId) {
+                        var spaceName = (resp && resp.space_name) ? resp.space_name : '';
+                        var groupName = (resp && resp.group_name) ? resp.group_name : '';
+                        sessionStorage.setItem('pendingJoinSuccessNotice', JSON.stringify({
+                            kind: 'group',
+                            spaceId: groupSpaceId,
+                            spaceName: spaceName,
+                            entityName: groupName,
+                            groupNo: (resp && resp.group_no) ? resp.group_no : groupNo,
+                            groupName: groupName,
+                            crossSpace: true,
+                            ts: Date.now()
+                        }));
+                    }
+                    // 同 Space / 私群（space_id=""）/ 异常：不写 sessionStorage，保持原行为。
+                } catch (e) { /* best-effort，不阻塞跳转 */ }
                 im.showConversation(groupNo,2)
             }).fail(function(e){
                 alert("错误：",JSON.stringify(e));
             })
-            
+
         });
     })
 </script>
