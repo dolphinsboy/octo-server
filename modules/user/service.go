@@ -111,6 +111,7 @@ type Service struct {
 	onetimePrekeysDB *onetimePrekeysDB
 	onlineService    *OnlineService
 	extLogin         externalLoginHandler
+	verificationDB   *verificationDB
 }
 
 // SetExternalLoginHandler 注入外部 IdP 登录 handler（在 user.New 内部调用,生产路径下保证非空）
@@ -137,6 +138,7 @@ func NewService(ctx *config.Context) IService {
 		onlineDB:         newOnlineDB(ctx),
 		Log:              log.NewTLog("userService"),
 		onlineService:    NewOnlineService(ctx),
+		verificationDB:   newVerificationDB(ctx),
 	}
 }
 
@@ -262,6 +264,15 @@ func (s *Service) GetUserDetail(uid string, loginUID string) (*UserDetailResp, e
 		}
 	}
 	resp := NewUserDetailResp(model, remark, loginUID, sourceFrom, online, lastOffline, deviceFlag, follow, blacklist, beDeleted, beBlacklist, userSetting, vercode)
+
+	// OCTO 实名认证（YUJ-354）：查询 user_verification，命中即标 verified 并回填 real_name。
+	// 失败仅 log 不阻断主响应 —— 实名是增强信息，不能因查询抖动让 profile 不可用。
+	if vr, vErr := s.verificationDB.QueryByUID(uid); vErr != nil {
+		s.Warn("查询实名认证记录失败", zap.Error(vErr), zap.String("uid", uid))
+	} else if vr != nil {
+		resp.RealnameVerified = true
+		resp.RealName = vr.RealName
+	}
 
 	// 为机器人用户填充bot_commands + 详情
 	if model.Robot == 1 {
@@ -445,6 +456,18 @@ func (s *Service) GetUserDetails(uids []string, loginUID string) ([]*UserDetailR
 			beDeleted = 1
 		}
 		userDetailResps = append(userDetailResps, NewUserDetailResp(userDetail, nameRemark, loginUID, sourceFrom, online, lastOffline, deviceFlag, follow, status, beDeleted, beBlacklist, setting, vercode))
+	}
+
+	// OCTO 实名认证（YUJ-354）：批量查实名记录，回填 verified 与 real_name。失败仅 log。
+	if verifiMap, vErr := s.verificationDB.QueryByUIDs(uids); vErr != nil {
+		s.Warn("批量查询实名认证记录失败", zap.Error(vErr))
+	} else {
+		for _, resp := range userDetailResps {
+			if vr, ok := verifiMap[resp.UID]; ok && vr != nil {
+				resp.RealnameVerified = true
+				resp.RealName = vr.RealName
+			}
+		}
 	}
 
 	// 为机器人用户填充bot_commands
@@ -1096,6 +1119,13 @@ type UserDetailResp struct {
 	JoinGroupInviteName string            `json:"join_group_invite_name"` // 加入群聊邀请人名称
 	JoinGroupTime       string            `json:"join_group_time"`        // 加入群聊时间
 	GroupMember         *GroupMemberResp  `json:"group_member,omitempty"` // 群成员信息
+	// OCTO 实名认证（YUJ-354 / GH#1300）
+	// RealnameVerified：该用户是否已完成 OCTO 实名认证（user_verification 有记录）。
+	// RealName：已认证时返回实名姓名；未认证留空。
+	// 目前对外可见（含非自己），因为实名结果会进入前端 displayName() 展示；
+	// 若后续产品要求"仅自己可见"，改为仅当 loginUID == m.UID 时填充即可。
+	RealnameVerified bool   `json:"realname_verified"`
+	RealName         string `json:"real_name,omitempty"`
 }
 
 type GroupMemberResp struct {

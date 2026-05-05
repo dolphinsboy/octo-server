@@ -93,6 +93,7 @@ type User struct {
 	deviceFlagsErr           error
 	appService               app.IService
 	loginGuard               *LoginGuard
+	verificationDB           *verificationDB
 }
 
 // New New
@@ -125,6 +126,7 @@ func New(ctx *config.Context) *User {
 		appService:               app.NewService(ctx),
 		loginGuard:               NewLoginGuard(ctx.GetRedisConn(), loginGuardThresholdFromEnv(), loginGuardWindowFromEnv()),
 		pinnedDB:                 NewPinnedDB(ctx),
+		verificationDB:           newVerificationDB(ctx),
 	}
 	u.pinned = NewPinned(u.pinnedDB, u.friendDB)
 	InitGlobalPinnedDB(ctx) // 初始化全局 PinnedDB 供其他模块调用
@@ -266,6 +268,11 @@ func (u *User) Route(r *wkhttp.WKHttp) {
 		v.GET("/user/oauth/gitee", u.giteeOAuth) // gitee登录
 
 	}
+
+	// OCTO 实名认证链路（YUJ-354 / GH#1300）——
+	// /internal/verification/complete 由 verify-service 回调，HMAC 鉴权；
+	// /internal/verify-token 由 OCTO 前端调用，需登录态。
+	u.routeVerification(r)
 
 	u.ctx.AddOnlineStatusListener(u.onlineService.listenOnlineStatus) // 监听在线状态
 	u.ctx.AddOnlineStatusListener(u.handleOnlineStatus)               // 需要放在listenOnlineStatus之后
