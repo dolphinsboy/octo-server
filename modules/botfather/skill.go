@@ -1,51 +1,7 @@
 package botfather
 
-import (
-	"fmt"
-	"strings"
 
-	"github.com/Mininglamp-OSS/octo-lib/config"
-)
-
-// deriveWSURL 从 baseURL 或 WuKongIM API URL 推导出 WebSocket URL
-// 优先使用 baseURL 对应的 WSS 地址（通过 Nginx 代理）
-func deriveWSURL(cfg *config.Config) string {
-	baseURL := strings.TrimSpace(cfg.External.BaseURL)
-	if baseURL != "" {
-		// baseURL = "https://api-test.example.com/api" → "wss://api-test.example.com/ws"
-		host := baseURL
-		host = strings.TrimPrefix(host, "https://")
-		host = strings.TrimPrefix(host, "http://")
-		if idx := strings.Index(host, "/"); idx >= 0 {
-			host = host[:idx]
-		}
-		// 如果 host 包含端口号，说明是直连模式（如 192.168.x.x:8090），
-		// 不走反向代理，应该使用 WuKongIM 的 5200 端口
-		if strings.Contains(host, ":") {
-			if idx := strings.LastIndex(host, ":"); idx >= 0 {
-				host = host[:idx]
-			}
-			return fmt.Sprintf("ws://%s:5200", host)
-		}
-		// 域名模式（如 api-test.example.com），走 Nginx 反向代理
-		if strings.HasPrefix(baseURL, "https://") {
-			return fmt.Sprintf("wss://%s/ws", host)
-		}
-		return fmt.Sprintf("ws://%s/ws", host)
-	}
-	// Fallback: 从 WuKongIM API URL 推导
-	apiURL := cfg.WuKongIM.APIURL
-	host := apiURL
-	host = strings.TrimPrefix(host, "http://")
-	host = strings.TrimPrefix(host, "https://")
-	if idx := strings.LastIndex(host, ":"); idx >= 0 {
-		host = host[:idx]
-	}
-	if strings.TrimSpace(cfg.External.IP) != "" {
-		host = cfg.External.IP
-	}
-	return fmt.Sprintf("ws://%s:5200", host)
-}
+import "fmt"
 
 func generateSkillMD(apiURL, wsURL string) string {
 	return fmt.Sprintf(`---

@@ -117,8 +117,42 @@ func (bf *BotFather) createUserBot(c *wkhttp.Context) {
 		description = *req.Description
 	}
 
-	// username 已废弃：接受但忽略，始终自动生成 Bot ID（含碰撞重试）
-	robotID, createErr := bf.cmdHandler.createBotCoreWithRetry(uid, name, botToken)
+	// 向后兼容：如果客户端传了 username，走原始逻辑（normalize + 校验 + 查重 + 用作 robot_id）；
+	// username 为空时走自动生成（新行为）。
+	var robotID string
+	var createErr error
+	reqUsername := strings.TrimSpace(strings.ToLower(req.Username))
+	if reqUsername != "" {
+		reqUsername = strings.TrimSuffix(reqUsername, BotUsernameSuffix)
+		if len(reqUsername) == 0 || len(reqUsername) > 20 {
+			c.ResponseError(errors.New("username 长度需要在 1-20 个字符之间"))
+			return
+		}
+		for _, r := range reqUsername {
+			if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_') {
+				c.ResponseError(errors.New("username 只能包含英文字母、数字和下划线"))
+				return
+			}
+		}
+		reqUsername = reqUsername + BotUsernameSuffix
+
+		// 唯一性预检
+		exists, _ := bf.db.existRobotByUsername(reqUsername)
+		if exists {
+			c.ResponseErrorWithStatus(fmt.Errorf("username %s 已被占用", reqUsername), http.StatusConflict)
+			return
+		}
+		u, _ := bf.userService.GetUserWithUsername(reqUsername)
+		if u != nil {
+			c.ResponseErrorWithStatus(fmt.Errorf("username %s 已被占用", reqUsername), http.StatusConflict)
+			return
+		}
+
+		createErr = bf.cmdHandler.tryCreateBotCore(uid, name, reqUsername, botToken, reqUsername)
+		robotID = reqUsername
+	} else {
+		robotID, createErr = bf.cmdHandler.createBotCoreWithRetry(uid, name, botToken)
+	}
 	if createErr != nil {
 		bf.Error("创建Bot失败", zap.Error(createErr))
 		c.ResponseError(errors.New("创建失败"))

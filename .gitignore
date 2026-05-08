@@ -81,3 +81,4 @@ CLAUDE.md
 dmworkim
 scripts/healthcheck.sh
 .claude/
+testenv/miniodata/

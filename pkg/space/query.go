@@ -18,9 +18,10 @@ import (
 //     BUILDER/ADMIN bot 时，只需在此 map 中追加，或改为从配置加载。
 //     对外接口通过 SystemBotList() 暴露，便于统一遍历。
 var SystemBots = map[string]bool{
-	"botfather":  true,
-	"u_10000":    true,
-	"fileHelper": true,
+	"botfather":    true,
+	"u_10000":      true,
+	"fileHelper":   true,
+	"notification": true,
 }
 
 // SystemBotList 以稳定顺序返回所有系统 Bot UID。

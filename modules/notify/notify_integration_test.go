@@ -122,7 +122,7 @@ func (s *stubAppService) DeleteApp(appID string) error {
 
 // newMockedDBSession returns a dbr.Session backed by go-sqlmock. Callers may
 // register expectations on `mock`, but T1/T2/T3 mostly avoid actually routing
-// queries to the DB (we pre-seed memberCache / botReady instead). The returned
+// queries to the DB (we pre-seed memberCache / botOK instead). The returned
 // closer should be called on cleanup.
 // Uses default regex matcher because dbr's MySQL dialect fully interpolates
 // placeholders into the SQL string before it reaches the driver, so matching
@@ -355,9 +355,9 @@ func TestIntegration_InternalAuth_CorrectToken_ReachesHandler(t *testing.T) {
 	us := newStubUserService()
 	n := newTestNotify(ctx, db, us, &stubAppService{}, "correct-token")
 
-	// Set botReady so ensureNotifyBotWithRetry short-circuits.
+	// Set botOK so deliverNotification proceeds.
 	const spaceID = "sp_auth_ok"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 	primeMemberCache(n, spaceID, "uid_a")
 
 	r := buildRouter(n)
@@ -547,7 +547,7 @@ func TestIntegration_SendNotifyBatch_MixedResults_207(t *testing.T) {
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
 	const goodSpace = "sp_good"
-	n.botReady.Store(goodSpace, true)
+	n.botOK = true
 	primeMemberCache(n, goodSpace, "uid_a")
 
 	r := buildRouter(n)
@@ -582,7 +582,7 @@ func TestIntegration_SendNotifyBatch_AllSuccess_200(t *testing.T) {
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
 	const spaceID = "sp_all_ok"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 	primeMemberCache(n, spaceID, "uid_a", "uid_b")
 
 	r := buildRouter(n)
@@ -614,7 +614,7 @@ func TestIntegration_Deliver_DeduplicatesTargets(t *testing.T) {
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
 	const spaceID = "sp_dedup"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 	primeMemberCache(n, spaceID, "uid_a", "uid_b")
 
 	resp, err := n.deliverNotification(&NotifyReq{
@@ -638,7 +638,7 @@ func TestIntegration_Deliver_ExcludesActor(t *testing.T) {
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
 	const spaceID = "sp_actor"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 	primeMemberCache(n, spaceID, "uid_a", "uid_b", "uid_actor")
 
 	resp, err := n.deliverNotification(&NotifyReq{
@@ -662,7 +662,7 @@ func TestIntegration_Deliver_NonMembersAreFiltered(t *testing.T) {
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
 	const spaceID = "sp_filter"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 	primeMemberCache(n, spaceID, "uid_a") // only uid_a is a member
 
 	resp, err := n.deliverNotification(&NotifyReq{
@@ -689,7 +689,7 @@ func TestIntegration_Deliver_SendFailure_MarksFiltered(t *testing.T) {
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
 	const spaceID = "sp_sendfail"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 	primeMemberCache(n, spaceID, "uid_a", "uid_b")
 
 	resp, err := n.deliverNotification(&NotifyReq{
@@ -718,7 +718,7 @@ func TestIntegration_Deliver_PartialSendFailure(t *testing.T) {
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
 	const spaceID = "sp_partial"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 	primeMemberCache(n, spaceID, "uid_a", "uid_b", "uid_c")
 
 	resp, err := n.deliverNotification(&NotifyReq{
@@ -744,7 +744,7 @@ func TestIntegration_Deliver_AllNonMembers_NoBotCreation(t *testing.T) {
 	as := &stubAppService{}
 	n := newTestNotify(ctx, db, us, as, "tk")
 	const spaceID = "sp_no_members"
-	// Prime cache with NO members. botReady intentionally NOT set.
+	// Prime cache with NO members. botOK intentionally NOT set.
 	primeMemberCache(n, spaceID /* no uids */)
 
 	resp, err := n.deliverNotification(&NotifyReq{
@@ -765,15 +765,24 @@ func TestIntegration_Deliver_AllNonMembers_NoBotCreation(t *testing.T) {
 	// No WuKongIM /message/send either.
 	assert.Equal(t, int32(0), atomic.LoadInt32(&wk.messageCount))
 
-	_, botReady := n.botReady.Load(spaceID)
-	assert.False(t, botReady, "botReady must not be flipped for empty deliveries")
+	botReady := n.botOK
+	assert.False(t, botReady, "botOK must not be flipped for empty deliveries")
 }
 
 // =============================================================================
-// T4. ensureNotifyBotWithRetry — double-check lock + retry
+
+// =============================================================================
+// T4. Static singleton bot — basic tests
 // =============================================================================
 
-func TestIntegration_EnsureBot_FastPath_WhenReady(t *testing.T) {
+func TestNotifyBotUID_Static(t *testing.T) {
+	uid := NotifyBotUID()
+	assert.Equal(t, "notification", uid)
+	assert.LessOrEqual(t, len(uid), 40, "UID must fit user.uid VARCHAR(40)")
+}
+
+func TestIntegration_EnsureBot_BotOK_SkipsCreation(t *testing.T) {
+	// When botOK is already true, deliverNotification should not fail
 	wk := newWuKongServer()
 	defer wk.close()
 	ctx := newTestContext(t, wk)
@@ -782,215 +791,12 @@ func TestIntegration_EnsureBot_FastPath_WhenReady(t *testing.T) {
 
 	us := newStubUserService()
 	n := newTestNotify(ctx, db, us, &stubAppService{}, "tk")
-	const spaceID = "sp_fast"
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 
-	n.ensureNotifyBotWithRetry(spaceID)
-
-	// Must not touch userService at all on the fast path.
+	// Should not panic or call userService
 	assert.Equal(t, int32(0), atomic.LoadInt32(&us.getByUsernameCalls))
-	assert.Equal(t, int32(0), atomic.LoadInt32(&us.addUserCount))
 }
 
-// When the bot user already exists, ensureNotifyBot short-circuits into the
-// "exists" branch. We must mock the DB writes it performs (ensureBotSpaceMember
-// + repairBotIfNeeded).
-func TestIntegration_EnsureBot_SlowPath_ExistingUser_MarksReady(t *testing.T) {
-	wk := newWuKongServer()
-	defer wk.close()
-	ctx := newTestContext(t, wk)
-	db, mock, closeDB := newMockedDBSession(t)
-	defer closeDB()
-
-	us := newStubUserService()
-	const spaceID = "sp_exist"
-	botUID := NotifyBotUID(spaceID)
-	// Pre-populate: bot already exists with correct name → no UpdateUser call,
-	// no notifySpaceMembersChannelUpdate.
-	us.users[botUID] = &user.Resp{UID: botUID, Name: "通知助手"}
-
-	n := newTestNotify(ctx, db, us, &stubAppService{}, "tk")
-
-	// ensureBotSpaceMember INSERT IGNORE (dbr interpolates args into the SQL).
-	mock.ExpectExec(`INSERT IGNORE INTO space_member`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	// repairBotIfNeeded SELECT COUNT → 1 (robot exists), so no further queries.
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM robot`).
-		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(1))
-
-	n.ensureNotifyBotWithRetry(spaceID)
-
-	// After the call, the bot should be marked ready in the ensureNotifyBotWithRetry's
-	// final step, which itself calls GetUserWithUsername once more.
-	_, ok := n.botReady.Load(spaceID)
-	assert.True(t, ok, "botReady should be flipped after successful ensure")
-	// AddUser must NOT be called on the existing-user branch.
-	assert.Equal(t, int32(0), atomic.LoadInt32(&us.addUserCount))
-	// WuKongIM /user/update was called at least once by syncBotNameToWuKongIM.
-	assert.GreaterOrEqual(t, atomic.LoadInt32(&wk.userUpdates), int32(1))
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-// AddUser failure must leave botReady unset so a future call can retry.
-func TestIntegration_EnsureBot_CreateFailure_NoReady_RetryableNextCall(t *testing.T) {
-	wk := newWuKongServer()
-	defer wk.close()
-	ctx := newTestContext(t, wk)
-	db, _, closeDB := newMockedDBSession(t)
-	defer closeDB()
-
-	us := newStubUserService()
-	us.addUserErr = fmt.Errorf("boom: user service unavailable")
-
-	n := newTestNotify(ctx, db, us, &stubAppService{}, "tk")
-	const spaceID = "sp_fail"
-
-	n.ensureNotifyBotWithRetry(spaceID)
-
-	_, ok := n.botReady.Load(spaceID)
-	assert.False(t, ok, "botReady must not be flipped on create failure")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&us.addUserCount), "AddUser called once on the first attempt")
-
-	// Second call must retry — AddUser is invoked again.
-	n.ensureNotifyBotWithRetry(spaceID)
-	assert.Equal(t, int32(2), atomic.LoadInt32(&us.addUserCount), "AddUser retried on subsequent call")
-	_, ok2 := n.botReady.Load(spaceID)
-	assert.False(t, ok2, "still not marked ready after second failure")
-}
-
-// Concurrent ensureNotifyBotWithRetry calls must be serialised by the per-
-// space mutex + double-check: only the FIRST goroutine performs the expensive
-// ensureNotifyBot work; the remaining 19 see botReady already stored and return.
-func TestIntegration_EnsureBot_Concurrency_SingleInvocation(t *testing.T) {
-	wk := newWuKongServer()
-	defer wk.close()
-	ctx := newTestContext(t, wk)
-	db, mock, closeDB := newMockedDBSession(t)
-	defer closeDB()
-
-	us := newStubUserService()
-	const spaceID = "sp_concurrent"
-	botUID := NotifyBotUID(spaceID)
-	// Pre-populate with correct-name user → no UpdateUser path, idempotent DB ops.
-	us.users[botUID] = &user.Resp{UID: botUID, Name: "通知助手"}
-	// Slow down GetUserWithUsername indirectly by sleeping inside AddUser is not useful
-	// here (AddUser isn't called). Instead we block the slow path via DB latency:
-	// only the first goroutine acquires the mutex, runs the INSERT + SELECT, and
-	// stores botReady. Others must short-circuit at the double-check.
-
-	n := newTestNotify(ctx, db, us, &stubAppService{}, "tk")
-
-	// Exactly ONE ensureBotSpaceMember + ONE repairBotIfNeeded query expected,
-	// even with 20 concurrent goroutines.
-	mock.ExpectExec(`INSERT IGNORE INTO space_member`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM robot`).
-		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(1))
-
-	const N = 20
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	wg.Add(N)
-	for i := 0; i < N; i++ {
-		go func() {
-			defer wg.Done()
-			<-start
-			n.ensureNotifyBotWithRetry(spaceID)
-		}()
-	}
-	close(start)
-	wg.Wait()
-
-	_, ok := n.botReady.Load(spaceID)
-	assert.True(t, ok, "botReady should be set after the first successful ensure")
-
-	// Mutex + double-check invariant: GetUserWithUsername is called at most
-	// 2 times total (once inside ensureNotifyBot, once in the final double-check
-	// of ensureNotifyBotWithRetry). All 19 remaining goroutines see botReady
-	// and take the fast path.
-	calls := atomic.LoadInt32(&us.getByUsernameCalls)
-	assert.LessOrEqual(t, calls, int32(2),
-		"expected at most 2 GetUserWithUsername calls, got %d — mutex or double-check regressed", calls)
-	// AddUser must not be called at all (existing-user branch).
-	assert.Equal(t, int32(0), atomic.LoadInt32(&us.addUserCount))
-	// DB expectations: if the mutex failed, we'd see far more than the two
-	// queries we registered, causing ExpectationsWereMet to report ordering or
-	// excess-call issues.
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
-
-// Full-create-path concurrency check: exercises ensureNotifyBot's CREATE branch
-// and asserts AddUser is invoked exactly once across 20 goroutines.
-// Uses reflect to inject the sqlmock-backed session into Context so ctx.GenSeq
-// can be served from the mock.
-func TestIntegration_EnsureBot_Concurrency_CreatePath_AddUserOnce(t *testing.T) {
-	wk := newWuKongServer()
-	defer wk.close()
-	ctx := newTestContext(t, wk)
-	db, mock, closeDB := newMockedDBSession(t)
-	defer closeDB()
-
-	injectMockDBIntoContext(t, ctx, db)
-
-	us := newStubUserService()
-	// Deliberately keep users map empty → GetUserWithUsername returns nil → create path.
-	// Add small delay so the first goroutine holds the mutex long enough that
-	// concurrent goroutines pile up behind the lock — maximising the chance to
-	// catch a missing double-check.
-	us.addUserDelay = 30 * time.Millisecond
-
-	as := &stubAppService{}
-
-	// Seq table: first call inserts seq, then queries.
-	// Order of DB ops in ensureNotifyBot create path:
-	//   1. ctx.GenSeq("robot") — if seqMap is empty, SELECT seq then INSERT seq
-	//   2. INSERT IGNORE INTO robot (...)
-	//   3. ensureBotSpaceMember INSERT IGNORE INTO space_member (...)
-	//   4. ctx.UpdateIMToken → WuKongIM /user/token (httptest)
-	//   5. syncBotNameToWuKongIM → WuKongIM /user/update (httptest)
-	// After return → ensureNotifyBotWithRetry's final GetUserWithUsername → non-nil → botReady stored.
-	//
-	// Because seqMap is a package-level cache in dmwork-lib/config, it may or may
-	// not already contain "robot" depending on test order. We use a flexible
-	// matcher to allow the seq query + update to match whatever happens.
-	mock.MatchExpectationsInOrder(false)
-	mock.ExpectQuery(`SELECT \* FROM seq WHERE.*seq:robot`).
-		WillReturnRows(sqlmock.NewRows([]string{"key", "min_seq", "step"}))
-	mock.ExpectExec(`insert into .seq.`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT IGNORE INTO robot`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT IGNORE INTO space_member`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	n := newTestNotify(ctx, db, us, as, "tk")
-	const spaceID = "sp_create_once"
-
-	const N = 20
-	var wg sync.WaitGroup
-	start := make(chan struct{})
-	wg.Add(N)
-	for i := 0; i < N; i++ {
-		go func() {
-			defer wg.Done()
-			<-start
-			n.ensureNotifyBotWithRetry(spaceID)
-		}()
-	}
-	close(start)
-	wg.Wait()
-
-	assert.Equal(t, int32(1), atomic.LoadInt32(&us.addUserCount),
-		"AddUser must be invoked exactly once across %d goroutines (mutex + double-check)", N)
-	assert.Equal(t, int32(1), atomic.LoadInt32(&as.createCount),
-		"CreateApp must be invoked exactly once as well")
-	_, ok := n.botReady.Load(spaceID)
-	assert.True(t, ok, "botReady must be set after a successful create")
-}
-
-// =============================================================================
-// Bonus coverage: memberCache refresh, name update, event handler, startup
-// =============================================================================
 
 // When memberCache is empty for the space, deliverNotification drives
 // memberCache.refresh which issues a `SELECT uid FROM space_member ...` query.
@@ -1007,7 +813,7 @@ func TestIntegration_Deliver_CacheMiss_RefreshesFromDB(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"uid"}).AddRow("uid_a").AddRow("uid_b"))
 
 	n := newTestNotify(ctx, db, newStubUserService(), &stubAppService{}, "tk")
-	n.botReady.Store(spaceID, true)
+	n.botOK = true
 
 	resp, err := n.deliverNotification(&NotifyReq{
 		SpaceID: spaceID,
@@ -1031,41 +837,6 @@ func TestIntegration_Deliver_CacheMiss_RefreshesFromDB(t *testing.T) {
 	assert.ElementsMatch(t, []string{"uid_b"}, resp2.Delivered)
 }
 
-// Exercises ensureNotifyBot's name-mismatch branch:
-// when the existing user's Name differs from "通知助手", UpdateUser + notifySpaceMembersChannelUpdate
-// fire. This covers bot_manager.notifySpaceMembersChannelUpdate (otherwise 0%).
-func TestIntegration_EnsureBot_NameMismatch_UpdatesAndNotifies(t *testing.T) {
-	wk := newWuKongServer()
-	defer wk.close()
-	ctx := newTestContext(t, wk)
-	db, mock, closeDB := newMockedDBSession(t)
-	defer closeDB()
-
-	us := newStubUserService()
-	const spaceID = "sp_rename"
-	botUID := NotifyBotUID(spaceID)
-	us.users[botUID] = &user.Resp{UID: botUID, Name: "旧名字"} // triggers rename path
-
-	n := newTestNotify(ctx, db, us, &stubAppService{}, "tk")
-
-	// notifySpaceMembersChannelUpdate: SELECT uid FROM space_member WHERE ...
-	mock.ExpectQuery(`SELECT uid FROM space_member`).
-		WillReturnRows(sqlmock.NewRows([]string{"uid"}).AddRow("uid_m1").AddRow("uid_m2"))
-	// ensureBotSpaceMember
-	mock.ExpectExec(`INSERT IGNORE INTO space_member`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	// repairBotIfNeeded
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM robot`).
-		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(1))
-
-	n.ensureNotifyBotWithRetry(spaceID)
-
-	_, ok := n.botReady.Load(spaceID)
-	assert.True(t, ok)
-	assert.GreaterOrEqual(t, atomic.LoadInt32(&us.updateUserCount), int32(1),
-		"UpdateUser must fire when existing bot name differs")
-	assert.NoError(t, mock.ExpectationsWereMet())
-}
 
 func TestIntegration_HandleSpaceMemberEvent_InvalidatesCache(t *testing.T) {
 	wk := newWuKongServer()
@@ -1095,43 +866,6 @@ func TestIntegration_HandleSpaceMemberEvent_InvalidatesCache(t *testing.T) {
 	assert.True(t, called)
 }
 
-// ensureNotifyBots (startup backfill) exercised with a single active space.
-// Covers bot_manager.go:21. Drives full create path via the injected ctx DB
-// because the bot user doesn't exist yet.
-func TestIntegration_EnsureNotifyBots_Startup_SingleSpace(t *testing.T) {
-	wk := newWuKongServer()
-	defer wk.close()
-	ctx := newTestContext(t, wk)
-	db, mock, closeDB := newMockedDBSession(t)
-	defer closeDB()
-	injectMockDBIntoContext(t, ctx, db)
-
-	us := newStubUserService()
-	as := &stubAppService{}
-	n := newTestNotify(ctx, db, us, as, "tk")
-
-	// SELECT space_id, name FROM space WHERE status = 1
-	mock.ExpectQuery(`SELECT space_id, name FROM space`).
-		WillReturnRows(sqlmock.NewRows([]string{"space_id", "name"}).AddRow("sp_one", "Space One"))
-	// Bot user doesn't exist → create path
-	mock.MatchExpectationsInOrder(false)
-	mock.ExpectQuery(`SELECT \* FROM seq`).
-		WillReturnRows(sqlmock.NewRows([]string{"key", "min_seq", "step"}))
-	mock.ExpectExec(`insert into .seq.`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT IGNORE INTO robot`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec(`INSERT IGNORE INTO space_member`).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	n.ensureNotifyBots()
-
-	_, ok := n.botReady.Load("sp_one")
-	assert.True(t, ok, "sp_one bot should be marked ready after startup backfill")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&us.addUserCount))
-	assert.Equal(t, int32(1), atomic.LoadInt32(&as.createCount))
-}
-
 // Exercises memberCache direct getValidMembers with an empty targets slice
 // (branch not covered elsewhere).
 func TestMemberCache_Verify_EmptyTargets(t *testing.T) {
@@ -1146,34 +880,12 @@ func TestMemberCache_Verify_EmptyTargets(t *testing.T) {
 // where NotifyBotUID generated uids longer than user.uid VARCHAR(40), causing MySQL
 // error 1406 on every bot creation (3h / 786 errors, module non-functional).
 //
-// PR #1263 shortened format to "ntf_{spaceID}" but the constraint is not structurally
-// enforced. This test locks the invariant: NotifyBotUID(any_real_space_id) <= 40.
+// Static singleton UID must fit user.uid VARCHAR(40).
 func TestNotifyBotUID_FitsUserUIDColumn(t *testing.T) {
-	const userUIDColumnLimit = 40 // user.uid VARCHAR(40) — keep in sync with DDL
-
-	t.Run("UUID standard format (36 chars with hyphens)", func(t *testing.T) {
-		spaceID := util.GenerUUID() // repo's canonical spaceID generator
-		uid := NotifyBotUID(spaceID)
-		require.LessOrEqualf(t, len(uid), userUIDColumnLimit,
-			"NotifyBotUID(%q)=%q (%d chars) exceeds user.uid VARCHAR(%d)",
-			spaceID, uid, len(uid), userUIDColumnLimit)
-	})
-
-	t.Run("max-length spaceID upper bound", func(t *testing.T) {
-		// Real spaceIDs come from util.GenerUUID() — always 36 chars.
-		// Construct a deliberately long spaceID to catch format drift if someone
-		// ever switches the generator or composes spaceIDs.
-		spaceID := strings.Repeat("a", 36)
-		uid := NotifyBotUID(spaceID)
-		require.LessOrEqualf(t, len(uid), userUIDColumnLimit,
-			"format drift: NotifyBotUID produces %d-char uid for 36-char spaceID", len(uid))
-	})
-
-	t.Run("format is stable (regression lock)", func(t *testing.T) {
-		// PR #1263 established the format `ntf_{spaceID}`. If this changes,
-		// re-verify the length math before removing this assertion.
-		uid := NotifyBotUID("abc-def-ghi")
-		require.Equal(t, "ntf_abc-def-ghi", uid,
-			"NotifyBotUID format changed — re-verify user.uid VARCHAR(40) still fits")
-	})
+	const userUIDColumnLimit = 40
+	uid := NotifyBotUID()
+	assert.Equal(t, "notification", uid)
+	assert.LessOrEqual(t, len(uid), userUIDColumnLimit,
+		"NotifyBotUID() = %q (%d chars) exceeds user.uid VARCHAR(%d)",
+		uid, len(uid), userUIDColumnLimit)
 }

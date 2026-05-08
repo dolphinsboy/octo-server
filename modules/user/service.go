@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Mininglamp-OSS/octo-server/modules/source"
@@ -685,6 +686,11 @@ func (s *Service) GetFriends(uid string) ([]*FriendResp, error) {
 
 // GetUser 获取用户
 func (s *Service) GetUser(uid string) (*Resp, error) {
+	// App Bot fast path: check app_bot Registry
+	if appBotResp := s.resolveAppBot(uid); appBotResp != nil {
+		return appBotResp, nil
+	}
+
 	userM, err := s.db.QueryByUID(uid)
 	if err != nil {
 		return nil, err
@@ -697,6 +703,39 @@ func (s *Service) GetUser(uid string) (*Resp, error) {
 	}
 
 	return newResp(userM), nil
+}
+
+// resolveAppBot checks if UID is an App Bot and returns a synthetic Resp.
+// Returns nil if not an App Bot or resolver not registered.
+func (s *Service) resolveAppBot(uid string) *Resp {
+	if !strings.HasPrefix(uid, "app_") || !strings.HasSuffix(uid, "_bot") {
+		return nil
+	}
+	v := appBotResolverValue.Load()
+	if v == nil {
+		return nil
+	}
+	fn := v.(AppBotResolverFunc)
+	name := fn(uid)
+	if name == "" {
+		return nil
+	}
+	return &Resp{
+		UID:   uid,
+		Name:  name,
+		Robot: 1,
+	}
+}
+
+// AppBotResolverFunc resolves an App Bot UID to display name. Returns empty if not found.
+type AppBotResolverFunc func(uid string) string
+
+// appBotResolverValue stores AppBotResolverFunc, set by the app_bot module to break circular imports.
+var appBotResolverValue atomic.Value
+
+// SetAppBotResolver registers the App Bot identity resolver.
+func SetAppBotResolver(fn AppBotResolverFunc) {
+	appBotResolverValue.Store(fn)
 }
 
 // GetUserWithUsername 获取用户
@@ -980,6 +1019,7 @@ type Resp struct {
 	MsgExpireSecond int64
 	CreatedAt       int64 // 注册时间 10位时间戳
 	IsDestroy       int   // 是否注销
+	Robot           int   // 机器人0.否1.是
 }
 
 func newResp(m *Model) *Resp {
@@ -996,6 +1036,7 @@ func newResp(m *Model) *Resp {
 		MsgExpireSecond: m.MsgExpireSecond,
 		IsDestroy:       m.IsDestroy,
 		CreatedAt:       time.Time(m.CreatedAt).Unix(),
+		Robot:           m.Robot,
 	}
 }
 

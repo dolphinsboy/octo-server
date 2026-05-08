@@ -22,6 +22,7 @@ import (
 	"github.com/Mininglamp-OSS/octo-server/modules/group"
 	"github.com/Mininglamp-OSS/octo-server/modules/thread"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
+	"github.com/Mininglamp-OSS/octo-server/pkg/botutil"
 	"github.com/Mininglamp-OSS/octo-server/modules/voice"
 	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/Mininglamp-OSS/octo-lib/config"
@@ -95,72 +96,20 @@ func New(ctx *config.Context) *BotFather {
 
 // Route 路由配置
 func (bf *BotFather) Route(r *wkhttp.WKHttp) {
+	// NOTE: Bot API endpoints (/v1/bot/*) have been migrated to modules/bot_api/.
+	// BotFather now only handles: documentation, User Bot management (BotFather commands),
+	// User API Key endpoints, and Robot Apply endpoints.
+
 	// 启动时批量同步所有 bot 的 token 到 WuKongIM（防止 WuKongIM 重启后 token 丢失）
+	// TODO: Move to bot_api module after confirming no startup ordering issue.
 	go bf.syncAllBotTokens()
 
 	// 文档端点（无需认证）
 	r.GET("/v1/bot/skill.md", bf.skillMD)
-	r.GET("/v1/bot/cli-guide.md", bf.cliGuideMD) // 保留旧路径兼容
+	r.GET("/v1/bot/cli-guide.md", bf.cliGuideMD)
 	r.GET("/v1/bot/setup-install.md", bf.cliGuideMD)
 	r.GET("/v1/bot/setup-newbot.md", bf.setupNewbotMD)
 	r.GET("/v1/bot/setup-quickstart.md", bf.setupQuickstartMD)
-
-	// register 端点（只需bot token，不走authBot中间件组）
-	r.POST("/v1/bot/register", bf.register)
-
-	// Bot API 端点（使用bot token认证）
-	botAPI := r.Group("/v1/bot", bf.authBot())
-	{
-		botAPI.POST("/sendMessage", bf.sendMessage)
-		botAPI.POST("/typing", bf.typing)
-		botAPI.POST("/readReceipt", bf.readReceipt)
-		botAPI.POST("/events", bf.getEvents)
-		botAPI.POST("/events/:event_id/ack", bf.eventAck)
-		// stream/start and stream/end removed — DMWork does not support streaming
-		botAPI.POST("/heartbeat", bf.heartbeat)
-		botAPI.POST("/messages/sync", bf.syncMessages)
-		botAPI.GET("/groups", bf.getGroups)
-		botAPI.GET("/groups/:group_no", bf.getGroupInfo)
-		botAPI.GET("/groups/:group_no/members", bf.getGroupMembers)
-		botAPI.GET("/groups/:group_no/md", bf.getGroupMd)          // 获取GROUP.md
-		botAPI.PUT("/groups/:group_no/md", bf.updateGroupMd)       // 更新GROUP.md
-		botAPI.GET("/space/members", bf.botSpaceMembers)                              // Bot 查询 Space 成员
-		botAPI.POST("/createGroup", bf.botGroupCreate)                               // Bot 创建群
-		botAPI.PUT("/groups/:group_no/info", bf.botGroupUpdate)                   // Bot 编辑群
-		botAPI.POST("/groups/:group_no/members/add", bf.botGroupMemberAdd)       // Bot 添加群成员
-		botAPI.POST("/groups/:group_no/members/remove", bf.botGroupMemberRemove) // Bot 移除群成员
-		// Bot Thread API (#892)
-		botAPI.POST("/groups/:group_no/threads", bf.botCreateThread)
-		botAPI.GET("/groups/:group_no/threads", bf.botListThreads)
-		botAPI.GET("/groups/:group_no/threads/:short_id", bf.botGetThread)
-		botAPI.DELETE("/groups/:group_no/threads/:short_id", bf.botDeleteThread)
-		botAPI.GET("/groups/:group_no/threads/:short_id/members", bf.botListThreadMembers)
-		botAPI.POST("/groups/:group_no/threads/:short_id/join", bf.botJoinThread)
-		botAPI.POST("/groups/:group_no/threads/:short_id/leave", bf.botLeaveThread)
-		botAPI.GET("/groups/:group_no/threads/:short_id/md", bf.botGetThreadMd)
-		botAPI.PUT("/groups/:group_no/threads/:short_id/md", bf.botUpdateThreadMd)
-		botAPI.POST("/setCommands", bf.setCommands)
-		// Bot File API (#433)
-		botAPI.POST("/file/upload", bf.botUploadFile)
-		botAPI.POST("/upload", bf.botUploadFile) // 兼容旧路径 (/v1/bot/upload)
-		botAPI.GET("/file/download/*path", bf.botFileDownload)
-		botAPI.GET("/upload/credentials", bf.botUploadCredentials) // STS 临时密钥签发
-		botAPI.GET("/upload/presigned", bf.botUploadPresigned)    // 预签名上传 URL 签发
-		botAPI.POST("/message/edit", bf.botMessageEdit)            // Bot 编辑消息
-		botAPI.GET("/user/info", bf.getUserInfo)                    // 查询用户基本信息 (#852)
-		// Voice context API
-		botAPI.PUT("/voice/context", bf.botPutVoiceContext)
-		botAPI.GET("/voice/context", bf.botGetVoiceContext)
-		botAPI.DELETE("/voice/context", bf.botDeleteVoiceContext)
-		botAPI.POST("/voice/transcribe", bf.botTranscribe)
-	}
-
-	// Bot File API（独立路由组，避免 GIN wildcard 冲突）
-	botFileAPI := r.Group("/v1/botfile", bf.authBot())
-	{
-		botFileAPI.GET("/*path", bf.botProxyFile)
-		botFileAPI.POST("/upload", bf.botUploadFile)
-	}
 
 	// User Bot API 端点（使用User API Key认证）
 	bf.setupUserAPIRoutes(r)
@@ -181,7 +130,7 @@ func (bf *BotFather) skillMD(c *wkhttp.Context) {
 	if strings.TrimSpace(apiURL) == "" {
 		apiURL = fmt.Sprintf("http://%s:8090", cfg.External.IP)
 	}
-	wsURL := deriveWSURL(cfg)
+	wsURL := botutil.DeriveWSURL(cfg)
 	content := generateSkillMD(apiURL, wsURL)
 	c.Header("Content-Type", "text/markdown; charset=utf-8")
 	c.String(http.StatusOK, content)
@@ -644,7 +593,7 @@ func (bf *BotFather) register(c *wkhttp.Context) {
 	if strings.TrimSpace(apiURL) == "" {
 		apiURL = fmt.Sprintf("http://%s:8090", cfg.External.IP)
 	}
-	wsURL := deriveWSURL(cfg)
+	wsURL := botutil.DeriveWSURL(cfg)
 
 	botName := ""
 	if u, _ := bf.userService.GetUser(robot.RobotID); u != nil {

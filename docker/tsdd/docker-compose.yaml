@@ -26,6 +26,7 @@ services:
     environment:
       - TS_COS_SECRET_ID
       - TS_COS_SECRET_KEY
+      - OCTO_MASTER_KEY  # 32-byte hex key for App Bot token encryption (set in .env)
     depends_on:
        - redis
        - mysql
@@ -42,6 +43,17 @@ services:
       - API_URL
     ports:
       - "82:80"
+  imocto-admin:  # 管理后台
+    image: imocto-admin:latest
+    restart: always
+    environment:
+      - API_BACKEND=octo-server:8090
+    ports:
+      - "3004:80"
+    volumes:
+      - ./configs/imocto-nginx:/etc/nginx/templates
+    depends_on:
+      - octo-server
   minio: # minio文件管理服务
     image: minio/minio:latest # use a remote image
     expose:

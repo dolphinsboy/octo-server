@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Mininglamp-OSS/octo-lib/config"
+	"github.com/Mininglamp-OSS/octo-server/pkg/botutil"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -206,7 +207,7 @@ func TestDeriveWSURL(t *testing.T) {
 			cfg := &config.Config{}
 			cfg.WuKongIM.APIURL = tt.apiURL
 			cfg.External.IP = tt.externalIP
-			got := deriveWSURL(cfg)
+			got := botutil.DeriveWSURL(cfg)
 			assert.Equal(t, tt.want, got)
 		})
 	}

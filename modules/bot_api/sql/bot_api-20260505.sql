@@ -1,0 +1,3 @@
+-- +migrate Up
+-- bot_api module placeholder (no additional tables needed for this module)
+-- Tables are managed by their respective modules (botfather for robot, app_bot for app_bot)

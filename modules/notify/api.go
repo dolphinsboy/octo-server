@@ -30,8 +30,8 @@ type Notify struct {
 	appService    app.IService
 	db            *dbr.Session
 	memberCache   *memberCache
-	botReady      sync.Map // spaceID → bool, true=bot已确认存在
-	botCreateMu   sync.Map // spaceID → *sync.Mutex, 防并发创建
+	botMu         sync.Mutex
+	botOK         bool
 	internalToken string
 	log.Log
 }
@@ -58,26 +58,29 @@ func New(ctx *config.Context) *Notify {
 		n.memberCache.invalidate(spaceID)
 	}
 
-	// 注册 Space 创建时自动生成 notify bot 的回调
+	// Static bot: no per-Space provisioning needed
 	event.NotifyBotProvisioner = func(spaceID string, spaceName string) {
-		go func() {
-			if n.ensureNotifyBot(spaceID, spaceName) {
-				n.botReady.Store(spaceID, true)
-			}
-		}()
+		// no-op: notification bot is a global singleton
 	}
 
 	// 监听成员加入事件
 	ctx.AddEventListener(event.SpaceMemberJoin, n.handleSpaceMemberEvent)
 
-	// 启动时补建通知 Bot（异步，带 panic recovery）
+	// 启动时创建全局通知 Bot（单例，带 panic recovery）
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				n.Error("ensureNotifyBots panic", zap.Any("recover", r))
+				n.Error("ensureNotifyBot panic", zap.Any("recover", r))
 			}
 		}()
-		n.ensureNotifyBots()
+		n.botMu.Lock()
+		if !n.botOK {
+			n.botOK = n.ensureNotifyBot()
+		}
+		n.botMu.Unlock()
+		if n.botOK {
+			n.Info("Notify bot ready")
+		}
 	}()
 
 	return n
@@ -220,15 +223,32 @@ func (n *Notify) deliverNotification(req *NotifyReq) (*NotifyResp, error) {
 		}, nil
 	}
 
-	// 确保 Bot 存在（B1 修复：失败可重试，不用 sync.Once）
-	n.ensureNotifyBotWithRetry(req.SpaceID)
-	if _, ok := n.botReady.Load(req.SpaceID); !ok {
-		return nil, errors.New("notify bot unavailable for space " + req.SpaceID)
+	// 确保 Bot 存在（失败可重试，不用 sync.Once）
+	if !n.botOK {
+		n.botMu.Lock()
+		if !n.botOK {
+			n.botOK = n.ensureNotifyBot()
+		}
+		n.botMu.Unlock()
+	}
+	if !n.botOK {
+		return nil, errors.New("notify bot unavailable")
+	}
+
+	// Inject space_id into payload for Space-level message filtering
+	// (same mechanism as botfather command.go:951)
+	// Clone to avoid mutating caller's map.
+	payload := make(map[string]interface{}, len(req.Payload))
+	for k, v := range req.Payload {
+		payload[k] = v
+	}
+	if payload["space_id"] == nil || payload["space_id"] == "" {
+		payload["space_id"] = req.SpaceID
 	}
 
 	// 并发投递（bounded worker pool，最多 20 并发）
-	fromUID := NotifyBotUID(req.SpaceID)
-	payloadBytes := []byte(util.ToJson(req.Payload))
+	fromUID := NotifyBotUID()
+	payloadBytes := []byte(util.ToJson(payload))
 
 	type sendResult struct {
 		uid     string
@@ -283,32 +303,6 @@ func (n *Notify) deliverNotification(req *NotifyReq) (*NotifyResp, error) {
 		Delivered: delivered,
 		Filtered:  filteredMap,
 	}, nil
-}
-
-// ensureNotifyBotWithRetry 确保 Bot 存在。成功后缓存标记，失败可重试（B1 修复）。
-func (n *Notify) ensureNotifyBotWithRetry(spaceID string) {
-	// 快路径：已确认存在
-	if _, ok := n.botReady.Load(spaceID); ok {
-		return
-	}
-
-	// 慢路径：加锁防并发，失败不标记（下次可重试）
-	muI, _ := n.botCreateMu.LoadOrStore(spaceID, &sync.Mutex{})
-	mu := muI.(*sync.Mutex)
-	mu.Lock()
-	defer mu.Unlock()
-
-	// double-check
-	if _, ok := n.botReady.Load(spaceID); ok {
-		return
-	}
-
-	n.ensureNotifyBot(spaceID, "")
-
-	// 只在 bot 确实存在时标记（验证 user 记录存在）
-	if resp, _ := n.userService.GetUserWithUsername(NotifyBotUID(spaceID)); resp != nil {
-		n.botReady.Store(spaceID, true)
-	}
 }
 
 // dedupTargets 去重并保持顺序
