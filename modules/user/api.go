@@ -624,10 +624,12 @@ func (u *User) uploadAvatar(c *wkhttp.Context) {
 	// Sync avatar path to app_bot record (best-effort, non-blocking).
 	// After upload, app_bot.avatar should reflect the upload endpoint path
 	// so that App Bot API responses return the correct avatar URL.
-	u.ctx.DB().UpdateBySql(
+	if _, syncErr := u.ctx.DB().UpdateBySql(
 		"UPDATE app_bot SET avatar=? WHERE uid=?",
 		u.ctx.GetConfig().GetAvatarPath(targetUID), targetUID,
-	).Exec()
+	).Exec(); syncErr != nil {
+		u.Warn("sync avatar to app_bot failed (non-fatal)", zap.Error(syncErr), zap.String("uid", targetUID))
+	}
 	c.ResponseOK()
 }
 
