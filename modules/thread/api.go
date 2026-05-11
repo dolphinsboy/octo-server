@@ -59,27 +59,18 @@ func (t *Thread) onMessages(messages []*config.MessageResp) {
 			continue
 		}
 
-		// 归档状态收到消息，自动解档
-		if thread.Status == ThreadStatusArchived {
-			version, err := t.ctx.GenSeq(ThreadSeqKey)
-			if err != nil {
-				t.Error("生成版本号失败", zap.Error(err))
-				continue
-			}
-			if err := t.db.UpdateStatus(shortID, ThreadStatusActive, version); err != nil {
-				t.Error("自动解档失败", zap.Error(err), zap.String("shortID", shortID))
-			} else {
-				t.Info("归档子区收到消息，自动解档", zap.String("shortID", shortID))
-			}
-		}
-
-		// 更新消息统计
+		// 收到消息：DB 层在行锁内决定是否解档。
+		// GenSeq 通过回调传入，只在锁内且确认当前是 archived 时才调用，确保版本号
+		// 严格晚于 cron 的版本号（GenSeq 全局单调），避免 thread.version 倒退。
+		// active 子区收消息走纯统计路径，不消耗 GenSeq。
 		content := parsePayloadContent(msg.Payload)
 		if runeLen := len([]rune(content)); runeLen > 500 {
 			content = string([]rune(content)[:500])
 		}
-		if err := t.db.UpdateMessageStats(shortID, content, msg.FromUID); err != nil {
-			t.Error("更新消息统计失败", zap.Error(err), zap.String("shortID", shortID))
+		if err := t.db.RecordMessageAndReactivate(shortID, content, msg.FromUID, func() (int64, error) {
+			return t.ctx.GenSeq(ThreadSeqKey)
+		}); err != nil {
+			t.Error("更新消息统计/解档失败", zap.Error(err), zap.String("shortID", shortID))
 		}
 
 		// 发送者不是子区成员，自动加入

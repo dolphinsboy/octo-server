@@ -173,24 +173,199 @@ func (d *DB) QuerySourceMessageIDsByShortIDs(shortIDs []string) (map[string]*int
 }
 
 
-// UpdateStatus 更新子区状态
-func (d *DB) UpdateStatus(shortID string, status int, version int64) error {
-	_, err := d.session.Update("thread").SetMap(map[string]interface{}{
-		"status":     status,
-		"version":    version,
-		"updated_at": time.Now(),
-	}).Where("short_id=?", shortID).Exec()
-	return err
+// ArchiveStaleBatch 批量把 status=ThreadStatusActive 且 last_message_at < threshold
+// 的子区切到 ThreadStatusArchived，单次最多 batchSize 行，返回实际归档行数。
+//
+// SQL 关键点：
+//   - WHERE 加 version < ? 防赛跑：cron 拿到版本 V 后，若任何人（手动 archive/unarchive、
+//     收消息 auto-unarchive）把同一行的版本号推到 >= V，本批不再触它，避免 cron 用旧
+//     版本号覆盖更新的版本号，让 sync 客户端漏拉。
+//   - ORDER BY last_message_at, id：保证 MySQL 复制（statement-based / mixed）确定性，
+//     且和 idx_status_last_msg_id 三列索引同序，避免 filesort。
+//   - last_message_at IS NULL 的子区（从未发过消息）一律保留，避免误归档新建空子区。
+//
+// 整批共享同一个 version（来自 caller 的 GenSeq）：sync API 按 version 单调递增拉取，
+// 一批同 version 不影响 cursor 推进。
+func (d *DB) ArchiveStaleBatch(threshold time.Time, batchSize int, version int64) (int64, error) {
+	if batchSize <= 0 {
+		return 0, nil
+	}
+	result, err := d.session.UpdateBySql(
+		"UPDATE thread SET status=?, version=?, updated_at=? "+
+			"WHERE status=? AND last_message_at IS NOT NULL AND last_message_at < ? "+
+			"AND version < ? "+
+			"ORDER BY last_message_at, id "+
+			"LIMIT ?",
+		ThreadStatusArchived, version, time.Now(),
+		ThreadStatusActive, threshold,
+		version,
+		batchSize,
+	).Exec()
+	if err != nil {
+		return 0, fmt.Errorf("archive stale threads: %w", err)
+	}
+	return result.RowsAffected()
 }
 
-// UpdateName 更新子区名称
-func (d *DB) UpdateName(shortID string, name string, version int64) error {
-	_, err := d.session.Update("thread").SetMap(map[string]interface{}{
-		"name":       name,
-		"version":    version,
-		"updated_at": time.Now(),
-	}).Where("short_id=?", shortID).Exec()
-	return err
+// versionRetryAttempts 是 CAS 写路径的最大重试次数。
+// 任一手动写要"输给"3 次并发更高版本号的写入才会失败，实际上单行很难触达。
+const versionRetryAttempts = 3
+
+// CAS 写路径的 sentinel errors，让 service 层能精确区分"行不存在"、"行被并发删了"、
+// "行不在期望状态"等场景，而不是把所有"无变更"都当成成功。
+var (
+	// ErrThreadNotFound 子区不存在（从未被创建或被物理删除）。
+	ErrThreadNotFound = errors.New("thread not found")
+	// ErrThreadDeleted 子区当前 status=ThreadStatusDeleted。不允许 archive/unarchive/改名。
+	ErrThreadDeleted = errors.New("thread deleted")
+	// ErrThreadStatusMismatch 行当前 status 与期望不符且不是目标状态。
+	// 例如 ArchiveThread 期望 active，但行已被并发改为 archived/deleted。
+	ErrThreadStatusMismatch = errors.New("thread status mismatch")
+	// ErrThreadCASExhausted CAS 重试次数耗尽。基本不会触发。
+	ErrThreadCASExhausted = errors.New("thread CAS retry exhausted")
+)
+
+// UpdateStatusFrom 把 status 从 expectedStatus 原子地切换到 newStatus，带 version
+// CAS guard 和重试。WHERE 同时校验 short_id / status==expectedStatus / version<新版本。
+//
+// 返回值语义：
+//   - nil：成功写入
+//   - nil（特殊）：当前 status 已经是 newStatus（重复操作幂等成功）
+//   - ErrThreadNotFound：行不存在
+//   - ErrThreadDeleted：行已被并发删除
+//   - ErrThreadStatusMismatch：行 status 与 expected 不符，也不是 newStatus
+//   - ErrThreadCASExhausted：CAS 三连败（基本不会发生）
+//
+// 比起锁外读 status 再调 UpdateStatus 的旧路径，这里把状态判定整合进 UPDATE 的 WHERE，
+// 闭掉了"读完 status 之后被 delete/cron 改写"的窗口。
+func (d *DB) UpdateStatusFrom(shortID string, expectedStatus, newStatus int, newVersion func() (int64, error)) error {
+	for attempt := 0; attempt < versionRetryAttempts; attempt++ {
+		version, err := newVersion()
+		if err != nil {
+			return fmt.Errorf("update status: gen version: %w", err)
+		}
+		result, err := d.session.UpdateBySql(
+			"UPDATE thread SET status=?, version=?, updated_at=? "+
+				"WHERE short_id=? AND status=? AND version<?",
+			newStatus, version, time.Now(),
+			shortID, expectedStatus, version,
+		).Exec()
+		if err != nil {
+			return fmt.Errorf("update status: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("update status: rows affected: %w", err)
+		}
+		if affected > 0 {
+			return nil
+		}
+		// 0 行：行可能不存在 / 已删 / 已是 newStatus / status 还在 expected 但被抢版本。
+		actual, ok, perr := d.probeStatus(shortID)
+		if perr != nil {
+			return fmt.Errorf("update status: probe: %w", perr)
+		}
+		if !ok {
+			return ErrThreadNotFound
+		}
+		switch actual {
+		case ThreadStatusDeleted:
+			return ErrThreadDeleted
+		case newStatus:
+			return nil // 已经是目标状态，幂等成功
+		case expectedStatus:
+			// 仍在期望状态，但 version 被并发抢先：换更大 GenSeq 重试
+		default:
+			return ErrThreadStatusMismatch
+		}
+	}
+	return ErrThreadCASExhausted
+}
+
+// MarkDeleted 把任何非 deleted 状态的子区切到 deleted。幂等：已删除直接返回 nil。
+func (d *DB) MarkDeleted(shortID string, newVersion func() (int64, error)) error {
+	for attempt := 0; attempt < versionRetryAttempts; attempt++ {
+		version, err := newVersion()
+		if err != nil {
+			return fmt.Errorf("mark deleted: gen version: %w", err)
+		}
+		result, err := d.session.UpdateBySql(
+			"UPDATE thread SET status=?, version=?, updated_at=? "+
+				"WHERE short_id=? AND status!=? AND version<?",
+			ThreadStatusDeleted, version, time.Now(),
+			shortID, ThreadStatusDeleted, version,
+		).Exec()
+		if err != nil {
+			return fmt.Errorf("mark deleted: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("mark deleted: rows affected: %w", err)
+		}
+		if affected > 0 {
+			return nil
+		}
+		actual, ok, perr := d.probeStatus(shortID)
+		if perr != nil {
+			return fmt.Errorf("mark deleted: probe: %w", perr)
+		}
+		if !ok {
+			return ErrThreadNotFound
+		}
+		if actual == ThreadStatusDeleted {
+			return nil // 已删除，幂等
+		}
+		// 行存在且非 deleted：被抢版本，重试
+	}
+	return ErrThreadCASExhausted
+}
+
+// UpdateName 改名。不允许在已删除的子区上改名（返回 ErrThreadDeleted）。
+func (d *DB) UpdateName(shortID string, name string, newVersion func() (int64, error)) error {
+	for attempt := 0; attempt < versionRetryAttempts; attempt++ {
+		version, err := newVersion()
+		if err != nil {
+			return fmt.Errorf("update name: gen version: %w", err)
+		}
+		result, err := d.session.UpdateBySql(
+			"UPDATE thread SET name=?, version=?, updated_at=? "+
+				"WHERE short_id=? AND status!=? AND version<?",
+			name, version, time.Now(),
+			shortID, ThreadStatusDeleted, version,
+		).Exec()
+		if err != nil {
+			return fmt.Errorf("update name: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("update name: rows affected: %w", err)
+		}
+		if affected > 0 {
+			return nil
+		}
+		actual, ok, perr := d.probeStatus(shortID)
+		if perr != nil {
+			return fmt.Errorf("update name: probe: %w", perr)
+		}
+		if !ok {
+			return ErrThreadNotFound
+		}
+		if actual == ThreadStatusDeleted {
+			return ErrThreadDeleted
+		}
+		// 行存在且非 deleted：被抢版本，重试
+	}
+	return ErrThreadCASExhausted
+}
+
+// probeStatus 读当前 status。返回 (status, exists, err)。
+func (d *DB) probeStatus(shortID string) (int, bool, error) {
+	var status int
+	n, err := d.session.SelectBySql("SELECT status FROM thread WHERE short_id=?", shortID).Load(&status)
+	if err != nil {
+		return 0, false, err
+	}
+	return status, n > 0, nil
 }
 
 // Update 更新子区信息
@@ -354,6 +529,71 @@ func (d *DB) CountMembersBatch(threadIDs []int64) (map[int64]int, error) {
 		countMap[r.ThreadID] = r.Count
 	}
 	return countMap, nil
+}
+
+// RecordMessageAndReactivate 收到消息时的事务路径：在行锁内决定是否解档。
+//
+// 流程：BEGIN → SELECT ... FOR UPDATE → 看当前 status 决定是否解档 → UPDATE → COMMIT。
+// 关键点：
+//   - GenSeq（即 newVersion 回调）只在锁内、且确认当前确实 archived 时才调用。
+//     避免 listener 在拿锁前预生成的版本号低于 cron 在它前面拿到的版本号，
+//     从而把 thread.version 写"回退"——这是 sync 游标按 version 单调推进的前提。
+//   - active 子区收消息不再消耗 GenSeq，热路径无写放大。
+//   - status=deleted 的行直接 no-op，不被消息复活。
+//
+// 与 ArchiveStaleBatch 的并发收敛：
+//   - cron 先拿锁 → status=archived → 我们 SELECT 读到 archived → 取新版本 → 解档为
+//     active（新版本号严格 > cron 的版本号，因为 GenSeq 是全局单调）。
+//   - 我们先拿锁 → last_message_at=NOW → cron 的 WHERE last_message_at<cutoff 不匹配
+//     → cron 跳过本行。
+func (d *DB) RecordMessageAndReactivate(shortID, content, senderUID string, newVersion func() (int64, error)) error {
+	tx, err := d.session.Begin()
+	if err != nil {
+		return fmt.Errorf("record message: begin tx: %w", err)
+	}
+	defer tx.RollbackUnlessCommitted()
+
+	var status int
+	loaded, err := tx.SelectBySql(
+		"SELECT status FROM thread WHERE short_id=? AND status!=? FOR UPDATE",
+		shortID, ThreadStatusDeleted,
+	).Load(&status)
+	if err != nil {
+		return fmt.Errorf("record message: lock thread: %w", err)
+	}
+	if loaded == 0 {
+		// 行不存在或已删除：消息到达不该复活已删的子区，直接放弃，但事务正常 commit。
+		return tx.Commit()
+	}
+
+	now := time.Now()
+	if status == ThreadStatusArchived {
+		version, gerr := newVersion()
+		if gerr != nil {
+			return fmt.Errorf("record message: gen version: %w", gerr)
+		}
+		if _, err := tx.UpdateBySql(
+			"UPDATE thread SET status=?, version=?, last_message_at=?, "+
+				"message_count = message_count + 1, last_message_content=?, "+
+				"last_message_sender_uid=?, updated_at=? "+
+				"WHERE short_id=?",
+			ThreadStatusActive, version, now, content, senderUID, now, shortID,
+		).Exec(); err != nil {
+			return fmt.Errorf("record message: reactivate update: %w", err)
+		}
+		return tx.Commit()
+	}
+
+	// status == active：仅更新统计，不动 version。
+	if _, err := tx.UpdateBySql(
+		"UPDATE thread SET last_message_at=?, message_count = message_count + 1, "+
+			"last_message_content=?, last_message_sender_uid=?, updated_at=? "+
+			"WHERE short_id=?",
+		now, content, senderUID, now, shortID,
+	).Exec(); err != nil {
+		return fmt.Errorf("record message: stats update: %w", err)
+	}
+	return tx.Commit()
 }
 
 // UpdateMessageStats 原子更新消息统计（收到消息时调用）

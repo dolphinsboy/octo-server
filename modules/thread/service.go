@@ -147,6 +147,12 @@ type MemberResp struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// threadVersionGen 返回一个绑定 s.ctx 的 GenSeq 回调，供 DB 层 CAS 重试时复用。
+// 抽出来避免在每个调用点重复 closure 字面量。
+func (s *Service) threadVersionGen() func() (int64, error) {
+	return func() (int64, error) { return s.ctx.GenSeq(ThreadSeqKey) }
+}
+
 // CreateThread 创建子区
 func (s *Service) CreateThread(req *CreateThreadReq) (*ThreadResp, error) {
 	// 验证是群成员
@@ -361,11 +367,13 @@ func (s *Service) UpdateName(groupNo, shortID, operatorUID, name string) error {
 		}
 	}
 
-	version, err := s.ctx.GenSeq(ThreadSeqKey)
-	if err != nil {
-		return fmt.Errorf("generate sequence: %w", err)
-	}
-	if err := s.db.UpdateName(shortID, name, version); err != nil {
+	if err := s.db.UpdateName(shortID, name, s.threadVersionGen()); err != nil {
+		switch {
+		case errors.Is(err, ErrThreadNotFound):
+			return errors.New("thread not found")
+		case errors.Is(err, ErrThreadDeleted):
+			return errors.New("thread has been deleted")
+		}
 		return fmt.Errorf("update thread name: %w", err)
 	}
 	return nil
@@ -519,11 +527,15 @@ func (s *Service) ArchiveThread(groupNo, shortID, operatorUID string) error {
 		return errors.New("no permission to archive")
 	}
 
-	version, err := s.ctx.GenSeq(ThreadSeqKey)
-	if err != nil {
-		return fmt.Errorf("generate sequence: %w", err)
-	}
-	if err := s.db.UpdateStatus(shortID, ThreadStatusArchived, version); err != nil {
+	if err := s.db.UpdateStatusFrom(shortID, ThreadStatusActive, ThreadStatusArchived, s.threadVersionGen()); err != nil {
+		switch {
+		case errors.Is(err, ErrThreadNotFound):
+			return errors.New("thread not found")
+		case errors.Is(err, ErrThreadDeleted):
+			return errors.New("thread has been deleted")
+		case errors.Is(err, ErrThreadStatusMismatch):
+			return errors.New("thread status changed concurrently")
+		}
 		return fmt.Errorf("update thread status: %w", err)
 	}
 	return nil
@@ -554,11 +566,15 @@ func (s *Service) UnarchiveThread(groupNo, shortID, operatorUID string) error {
 		return errors.New("no permission to unarchive")
 	}
 
-	version, err := s.ctx.GenSeq(ThreadSeqKey)
-	if err != nil {
-		return fmt.Errorf("generate sequence: %w", err)
-	}
-	if err := s.db.UpdateStatus(shortID, ThreadStatusActive, version); err != nil {
+	if err := s.db.UpdateStatusFrom(shortID, ThreadStatusArchived, ThreadStatusActive, s.threadVersionGen()); err != nil {
+		switch {
+		case errors.Is(err, ErrThreadNotFound):
+			return errors.New("thread not found")
+		case errors.Is(err, ErrThreadDeleted):
+			return errors.New("thread has been deleted")
+		case errors.Is(err, ErrThreadStatusMismatch):
+			return errors.New("thread status changed concurrently")
+		}
 		return fmt.Errorf("update thread status: %w", err)
 	}
 	return nil
@@ -585,11 +601,10 @@ func (s *Service) DeleteThread(groupNo, shortID, operatorUID string) error {
 		return errors.New("no permission to delete")
 	}
 
-	version, err := s.ctx.GenSeq(ThreadSeqKey)
-	if err != nil {
-		return fmt.Errorf("generate sequence: %w", err)
-	}
-	if err := s.db.UpdateStatus(shortID, ThreadStatusDeleted, version); err != nil {
+	if err := s.db.MarkDeleted(shortID, s.threadVersionGen()); err != nil {
+		if errors.Is(err, ErrThreadNotFound) {
+			return errors.New("thread not found")
+		}
 		return fmt.Errorf("update thread status: %w", err)
 	}
 

@@ -1,6 +1,7 @@
 package thread
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"os"
@@ -33,8 +34,26 @@ func init() {
 		api := New(ctx.(*config.Context))
 		groupService := group.NewService(ctx.(*config.Context))
 
+		archiveWorker := NewArchiveWorker(ctx.(*config.Context), LoadArchiveConfig())
+		// workerCancel 在 Start 里每次重建，让 Stop→Start 重启路径拿到新鲜 ctx；
+		// 框架当前只 Start 一次，但避免给未来的 graceful-reload 留陷阱。
+		var workerCancel context.CancelFunc
+
 		return register.Module{
 			Name: "thread",
+			Start: func() error {
+				workerCtx, cancel := context.WithCancel(context.Background())
+				workerCancel = cancel
+				archiveWorker.Start(workerCtx)
+				return nil
+			},
+			Stop: func() error {
+				if workerCancel != nil {
+					workerCancel()
+				}
+				archiveWorker.Stop()
+				return nil
+			},
 			SetupAPI: func() register.APIRouter {
 				return api
 			},
