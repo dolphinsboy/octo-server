@@ -190,12 +190,41 @@ func (sm *ServiceMinio) DownloadURL(ph string, filename string) (string, error) 
 // newClient builds a MinIO client pinned to the SDK's default region, which
 // is what `mc` and the MinIO server itself ship with. Pinning the region
 // here lets the SDK skip a GetBucketLocation pre-flight on every request.
+//
+// This client targets the *server-internal* `UploadURL` (typically a
+// container service name like `minio:9000`). It is used by UploadFile,
+// GetFile, and the bucket-bootstrap path — i.e. anywhere the Go process
+// itself initiates the request. Browser-facing presigned URLs must instead
+// be issued by `newPublicClient` so the SigV4 signature is valid for the
+// host the browser actually resolves.
 func (sm *ServiceMinio) newClient() (*minio.Client, error) {
 	minioConfig := sm.ctx.GetConfig().Minio
-	uploadUl, _ := url.Parse(minioConfig.UploadURL)
-	endpoint := uploadUl.Host
-	useSSL := strings.HasPrefix(uploadUl.Scheme, "https")
+	return sm.newClientForEndpoint(minioConfig.UploadURL)
+}
 
+// newPublicClient builds a MinIO client signing against the browser-facing
+// endpoint resolved by `publicEndpoint`. Presigned PUT/GET URLs MUST be
+// issued from this client: SigV4 includes `host` in the signed headers, so
+// any post-sign host rewrite invalidates the signature. Signing once with
+// the public host means the URL the browser receives is the URL the
+// signature is valid for, no rewriting needed.
+func (sm *ServiceMinio) newPublicClient() (*minio.Client, error) {
+	return sm.newClientForEndpoint(sm.publicEndpoint())
+}
+
+// newClientForEndpoint builds a MinIO client against an arbitrary base URL.
+// Endpoint scheme drives TLS; an empty or unparseable base URL surfaces as
+// the SDK's "endpoint cannot be empty" error rather than producing a client
+// silently bound to the wrong host.
+func (sm *ServiceMinio) newClientForEndpoint(baseURL string) (*minio.Client, error) {
+	minioConfig := sm.ctx.GetConfig().Minio
+	parsed, _ := url.Parse(strings.TrimRight(baseURL, "/"))
+	endpoint := ""
+	useSSL := false
+	if parsed != nil {
+		endpoint = parsed.Host
+		useSSL = strings.HasPrefix(parsed.Scheme, "https")
+	}
 	return minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(minioConfig.AccessKeyID, minioConfig.SecretAccessKey, ""),
 		Secure: useSSL,
@@ -203,25 +232,37 @@ func (sm *ServiceMinio) newClient() (*minio.Client, error) {
 	})
 }
 
-// rewriteToPublicHost rewrites the scheme/host of a presigned URL produced
-// against the server-internal `UploadURL`/`DownloadURL` so that the link
-// works from a browser. The internal URL is what the Go process talks to
-// (often a Docker service name); the public URL is what end-user browsers
-// resolve. When `publicBase` is empty the original URL is returned
-// unchanged.
-func rewriteToPublicHost(u *url.URL, publicBase string) *url.URL {
-	publicBase = strings.TrimSpace(publicBase)
-	if publicBase == "" {
-		return u
+// publicEndpoint returns the browser-facing MinIO base URL used to issue
+// presigned URLs. Resolution order:
+//
+//  1. `cfg.Minio.DownloadURL` — the documented browser-facing endpoint.
+//     Operators behind nginx or running with split internal / external
+//     hosts SHOULD set this.
+//  2. `cfg.Minio.UploadURL` — fallback when DownloadURL is empty. Logged
+//     as a warning because in any non-trivial deployment this is the
+//     server-internal hostname (e.g. a Docker service name) which the
+//     browser cannot resolve, and the resulting presigned URL will fail.
+//  3. `cfg.Minio.URL` — last-resort fallback, same caveat.
+//
+// Note: octo-lib's MinioConfig auto-fills DownloadURL from URL when both
+// are blank, so reaching the UploadURL fallback here in practice means
+// the operator explicitly configured separate URL/UploadURL/DownloadURL
+// values and zeroed DownloadURL — typically a misconfiguration. A
+// future octo-lib release may rename this field to `PublicEndpoint` and
+// deprecate `DownloadURL` to make the role explicit; this resolver is
+// the single point at which that rename would land in octo-server.
+func (sm *ServiceMinio) publicEndpoint() string {
+	minioConfig := sm.ctx.GetConfig().Minio
+	if v := strings.TrimSpace(minioConfig.DownloadURL); v != "" {
+		return v
 	}
-	parsed, err := url.Parse(strings.TrimRight(publicBase, "/"))
-	if err != nil || parsed.Host == "" {
-		return u
+	if v := strings.TrimSpace(minioConfig.UploadURL); v != "" {
+		sm.Warn("minio.DownloadURL 未设置，预签名URL将退回到 UploadURL；浏览器可能无法解析此主机",
+			zap.String("uploadURL", v))
+		return v
 	}
-	clone := *u
-	clone.Host = parsed.Host
-	clone.Scheme = parsed.Scheme
-	return &clone
+	sm.Warn("minio.DownloadURL 与 UploadURL 都未设置，预签名URL退回到 minio.URL")
+	return strings.TrimSpace(minioConfig.URL)
 }
 
 // PresignedPutURL generates a presigned PUT URL the browser can use to
@@ -229,8 +270,20 @@ func rewriteToPublicHost(u *url.URL, publicBase string) *url.URL {
 // resulting object. The target bucket is bootstrapped on first use via
 // `ensureBucket` so a presigned PUT against a fresh deployment never lands
 // on a NoSuchBucket response.
+//
+// The returned URL is signed against the *browser-facing* endpoint
+// (`publicEndpoint`), not the server-internal one. SigV4 includes `host` in
+// the signed headers, so any post-sign host change would invalidate the
+// signature; signing with the public host up front is the only way for the
+// resulting URL to be valid as-is from a browser. Bucket bootstrap still
+// runs against the internal client because it needs network reachability,
+// not signature validity for the browser.
 func (sm *ServiceMinio) PresignedPutURL(objectPath string, contentType string, contentDisposition string, expires time.Duration) (uploadURL string, downloadURL string, err error) {
-	client, err := sm.newClient()
+	internalClient, err := sm.newClient()
+	if err != nil {
+		return "", "", err
+	}
+	publicClient, err := sm.newPublicClient()
 	if err != nil {
 		return "", "", err
 	}
@@ -243,7 +296,7 @@ func (sm *ServiceMinio) PresignedPutURL(objectPath string, contentType string, c
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := sm.ensureBucket(ctx, client, bucketName); err != nil {
+	if err := sm.ensureBucket(ctx, internalClient, bucketName); err != nil {
 		return "", "", fmt.Errorf("预签名上传前的目录引导失败: %w", err)
 	}
 
@@ -256,16 +309,15 @@ func (sm *ServiceMinio) PresignedPutURL(objectPath string, contentType string, c
 		if contentDisposition != "" {
 			headers.Set("Content-Disposition", contentDisposition)
 		}
-		presigned, err = client.PresignHeader(ctx, http.MethodPut, bucketName, objectKey, expires, nil, headers)
+		presigned, err = publicClient.PresignHeader(ctx, http.MethodPut, bucketName, objectKey, expires, nil, headers)
 	} else {
-		presigned, err = client.PresignedPutObject(ctx, bucketName, objectKey, expires)
+		presigned, err = publicClient.PresignedPutObject(ctx, bucketName, objectKey, expires)
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("生成预签名URL失败: %w", err)
 	}
 
-	minioConfig := sm.ctx.GetConfig().Minio
-	uploadURL = rewriteToPublicHost(presigned, minioConfig.UploadURL).String()
+	uploadURL = presigned.String()
 
 	dl, dlErr := sm.DownloadURL(objectPath, "")
 	if dlErr != nil {
@@ -276,9 +328,11 @@ func (sm *ServiceMinio) PresignedPutURL(objectPath string, contentType string, c
 
 // PresignedGetURL generates a presigned GET URL with a Content-Disposition
 // override so the browser saves the file under the correct user-facing
-// filename. MinIO 默认 bucket 为公共读，但鉴权模式下也通过此方法签发。
+// filename. The URL is signed against the browser-facing endpoint
+// (`publicEndpoint`); no post-sign host rewriting is performed. MinIO 默认
+// bucket 为公共读，但鉴权模式下也通过此方法签发。
 func (sm *ServiceMinio) PresignedGetURL(objectPath string, filename string, disposition string, expires time.Duration) (string, error) {
-	client, err := sm.newClient()
+	client, err := sm.newPublicClient()
 	if err != nil {
 		return "", err
 	}
@@ -306,7 +360,5 @@ func (sm *ServiceMinio) PresignedGetURL(objectPath string, filename string, disp
 	if err != nil {
 		return "", fmt.Errorf("生成预签名GET URL失败: %w", err)
 	}
-
-	minioConfig := sm.ctx.GetConfig().Minio
-	return rewriteToPublicHost(presigned, minioConfig.DownloadURL).String(), nil
+	return presigned.String(), nil
 }

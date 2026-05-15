@@ -62,7 +62,32 @@ wukongIM:
 # unsigned DownloadURL. Switch to MinIO/COS/OSS for browser-direct upload.
 fileService: "minio"
 minio:
+  # Server-internal base URL — what the Go process uses to reach MinIO.
+  # In compose this is the `minio` service name on the `octo-net` bridge.
+  # Browsers cannot resolve this; do NOT expose it to clients.
   url: "http://minio:9000"
+  # uploadURL: ""    # optional override; falls back to `url` when empty.
+  #                  # Used by UploadFile / GetFile (server-side I/O) and by
+  #                  # the bucket-bootstrap path. Keep it pointed at the
+  #                  # internal hostname.
+  #
+  # downloadURL is the BROWSER-FACING base URL: the host the user's browser
+  # actually resolves and the host that presigned PUT/GET URLs are signed
+  # against. SigV4 includes `host` in the signed headers, so this MUST be
+  # the URL the browser will hit — there is no post-sign rewriting.
+  #
+  # Typical values:
+  #   - direct LAN MinIO:        http://minio.local:9000
+  #   - nginx-proxied (path):    https://octo.example.com/minio
+  #   - nginx-proxied (subdom):  https://files.example.com
+  #   - host-port-mapped (dev):  http://127.0.0.1:9000
+  #
+  # If left empty, downloadURL falls back to `url` and presigned URLs will
+  # carry the internal `minio:9000` host — which works only when the Go
+  # process and the browser share the same DNS view (i.e. for inside-cluster
+  # service-to-service tests, not real users). Set this once your nginx /
+  # reverse-proxy / host-port mapping is finalized.
+  downloadURL: "http://minio:9000"
   accessKeyID: "octoadmin"
   secretAccessKey: "CHANGE_ME_MINIO_PASSWORD"
 
