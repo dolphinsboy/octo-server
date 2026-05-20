@@ -157,6 +157,50 @@ func TestSystemSettings_LocalLoginOff_AutoFalseWhenOIDCEnabledButMisconfigured(t
 		"OIDC ENABLED 但配置残缺时,等同无可用第三方登录,必须回退避免锁死")
 }
 
+// PR #104 reviewer Jerry-Xin (P0): DM_OIDC_PROVIDER_ID 非法时,
+// modules/oidc/config.go:loadProvider 会 fatal,api.go:119 把 cfg 置 nil,
+// 整套 OIDC handler 被注册为 disabled (api.go:256)。此时 SSO 实际上不可用,
+// 但本镜像如果只看 issuer/client_id/secret/redirect/rt_key 仍会返回 true,
+// 配合 local_off=1 就锁死。镜像必须连 providerIDRe 一起守。
+func TestSystemSettings_LocalLoginOff_AutoFalseWhenOIDCProviderIDInvalid(t *testing.T) {
+	s := newTestSystemSettings(t, nil)
+	enableFullOIDCForTest(t)
+	// 完整配置之上,把 provider ID 改成正则不允许的值(含 '/')。
+	t.Setenv("DM_OIDC_PROVIDER_ID", "foo/bar")
+	s.ctx.GetConfig().Github.ClientID = ""
+	s.ctx.GetConfig().Github.ClientSecret = ""
+	s.ctx.GetConfig().Gitee.ClientID = ""
+	s.ctx.GetConfig().Gitee.ClientSecret = ""
+
+	require.NoError(t, s.db.upsert("login", "local_off", "1", settingTypeBool, ""))
+	require.NoError(t, s.Reload())
+	assert.False(t, s.LocalLoginOff(),
+		"非法 provider ID 让 OIDC handler 被禁用,等同无可用 SSO,必须回退")
+}
+
+// PR #104 reviewer yujiawei (P2): DM_OIDC_ENABLED 解析必须与
+// modules/oidc/config.go:getBool 完全一致 —— 后者用 strconv.ParseBool,
+// 接受 t/T/True/TRUE 等。镜像如果只识别 "true"/"1" 会出现 OIDC 实际在跑
+// 但 isOIDCFullyConfigured 误判为关闭、safety override 错误打开本地登录。
+func TestSystemSettings_LocalLoginOff_AcceptsParseBoolEnabledSpellings(t *testing.T) {
+	for _, spelling := range []string{"t", "T", "True", "TRUE"} {
+		t.Run(spelling, func(t *testing.T) {
+			s := newTestSystemSettings(t, nil)
+			enableFullOIDCForTest(t)
+			t.Setenv("DM_OIDC_ENABLED", spelling)
+			s.ctx.GetConfig().Github.ClientID = ""
+			s.ctx.GetConfig().Github.ClientSecret = ""
+			s.ctx.GetConfig().Gitee.ClientID = ""
+			s.ctx.GetConfig().Gitee.ClientSecret = ""
+
+			require.NoError(t, s.db.upsert("login", "local_off", "1", settingTypeBool, ""))
+			require.NoError(t, s.Reload())
+			assert.True(t, s.LocalLoginOff(),
+				"DM_OIDC_ENABLED=%q 必须与 oidc/config.go 的 ParseBool 一致地识别为开启", spelling)
+		})
+	}
+}
+
 func TestSystemSettings_LocalLoginOff_TrueWhenGitHubConfigured(t *testing.T) {
 	s := newTestSystemSettings(t, nil)
 	t.Setenv("DM_OIDC_ENABLED", "")

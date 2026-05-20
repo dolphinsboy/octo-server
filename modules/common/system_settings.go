@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"os"
+	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -302,8 +302,20 @@ func anyThirdPartyLoginConfigured(cfg *config.Config) bool {
 	return false
 }
 
-// isOIDCFullyConfigured mirrors the required-env list inside
-// modules/oidc/config.go:loadProvider (plus the RT encryption key check).
+// oidcProviderIDRe mirrors modules/oidc/config.go:providerIDRe. Kept in sync
+// by the reciprocal comments on both sides (see loadProvider's required block).
+// A literal duplication, not a regex compiled from a shared string, because
+// the alternative (extracting to a leaf package) would touch ~10 files for
+// one shared regex; the maintenance cost is one extra place to update if
+// the rule ever changes.
+var oidcProviderIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// isOIDCFullyConfigured mirrors the fatal checks inside
+// modules/oidc/config.go:loadProvider — including the provider-ID regex,
+// because an invalid ID makes LoadConfig fail, leaves oidc.cfg=nil, and
+// causes the OIDC routes to be registered as 404/disabled at request time.
+// Skipping the regex would let local_off=1 + invalid PROVIDER_ID slip past
+// the safety override and lock everyone out.
 //
 // Why duplicated instead of importing modules/oidc:
 //   modules/common ← system_settings.go would need to import modules/oidc,
@@ -315,18 +327,26 @@ func anyThirdPartyLoginConfigured(cfg *config.Config) bool {
 //   prompts updating both places.
 //
 // Mirrored requirements (keep in sync with modules/oidc/config.go):
-//   - DM_OIDC_ENABLED=true|1
+//   - DM_OIDC_ENABLED  parsed by strconv.ParseBool — accepts 1/0/t/T/true/
+//     True/TRUE/f/F/false/etc, matching oidc/config.go:getBool exactly.
+//     Earlier strings.ToLower-style parsing diverged on "t"/"T".
+//   - DM_OIDC_PROVIDER_ID             default "oidc"; must match providerIDRe
 //   - DM_OIDC_PROVIDER_ISSUER         (alias DM_OIDC_AEGIS_ISSUER)
 //   - DM_OIDC_PROVIDER_CLIENT_ID      (alias DM_OIDC_AEGIS_CLIENT_ID)
 //   - DM_OIDC_PROVIDER_CLIENT_SECRET  (alias DM_OIDC_AEGIS_CLIENT_SECRET)
 //   - DM_OIDC_PROVIDER_REDIRECT_URI   (alias DM_OIDC_AEGIS_REDIRECT_URI)
 //   - DM_OIDC_RT_ENC_KEY              (base64, 32 bytes after decode)
 //
-// We intentionally do NOT replicate provider-ID regex / scope / duration
-// checks — those are non-fatal for "is there a working IdP?" guard, only
-// affect specific request paths.
+// We intentionally do NOT replicate non-fatal checks (scope strings,
+// durations) — those don't make LoadConfig fail and don't disable the
+// callback path.
 func isOIDCFullyConfigured() bool {
-	if v := strings.ToLower(os.Getenv("DM_OIDC_ENABLED")); v != "true" && v != "1" {
+	v := os.Getenv("DM_OIDC_ENABLED")
+	if v == "" {
+		return false
+	}
+	enabled, err := strconv.ParseBool(v)
+	if err != nil || !enabled {
 		return false
 	}
 	required := []struct {
@@ -341,6 +361,15 @@ func isOIDCFullyConfigured() bool {
 		if os.Getenv(r.primary) == "" && os.Getenv(r.alias) == "" {
 			return false
 		}
+	}
+	// Provider ID: empty falls back to "oidc" (matches loadProvider default),
+	// non-empty must satisfy the same regex or LoadConfig fails fatally.
+	providerID := os.Getenv("DM_OIDC_PROVIDER_ID")
+	if providerID == "" {
+		providerID = "oidc"
+	}
+	if !oidcProviderIDRe.MatchString(providerID) {
+		return false
 	}
 	// RT key must base64-decode to 32 bytes (AES-256). Just non-empty is not
 	// enough — oidc/config.go rejects wrong-length keys at boot, our guard
@@ -358,19 +387,27 @@ func isOIDCFullyConfigured() bool {
 }
 
 // LogLocalLoginOffSafetyOverrideIfActive emits a single error-level log entry
-// when the DB has login.local_off=1 but no third-party login is configured —
+// when local_off is intended to be on but no third-party login is configured —
 // the exact state where LocalLoginOff() silently returns false to keep the
 // deployment from locking itself. The log is the only signal ops have that
 // the admin's intent is currently being overridden; without it the
 // inconsistency is invisible until someone wonders why local login still
 // works after flipping the switch.
 //
-// Callers: invoke once at server startup (Common.Route) after Load completes.
-// Also called from the manager update handler after a write that touched
-// login.local_off, so the same warning surfaces when the danger is created
-// at runtime — not only across restarts.
-func (s *SystemSettings) LogLocalLoginOffSafetyOverrideIfActive() {
-	if !s.getBool("login", "local_off", false) {
+// Why localOff is a parameter, not read from snapshot here:
+//   Callers know the intended value with stronger guarantees than the
+//   shared snapshot. The manager-write path can pass the just-validated
+//   request value (independent of whether Reload succeeded — PR #104 P2
+//   from yujiawei). Startup passes the freshly-loaded snapshot value.
+//   Reading the snapshot directly inside this method would silently miss
+//   the warning when Reload fails right after a write, exactly when ops
+//   most needs the signal.
+//
+// Callers: invoke once at server startup (Common.Route) after Load
+// completes, and from the manager update handler after a write that
+// touched login.local_off (passing the plan's value).
+func (s *SystemSettings) LogLocalLoginOffSafetyOverrideIfActive(localOff bool) {
+	if !localOff {
 		return
 	}
 	if anyThirdPartyLoginConfigured(s.ctx.GetConfig()) {
@@ -378,6 +415,16 @@ func (s *SystemSettings) LogLocalLoginOffSafetyOverrideIfActive() {
 	}
 	s.Error("login.local_off=1 但未配置任何第三方登录 (OIDC / GitHub / Gitee); " +
 		"已自动回退为允许本地登录,避免锁死;请尽快补齐第三方登录配置后再开启此开关")
+}
+
+// RawLocalLoginOffFromSnapshot returns the snapshot's raw DB value for
+// login.local_off without applying the SSO-safety override. Used by callers
+// that need to feed LogLocalLoginOffSafetyOverrideIfActive at startup (the
+// snapshot has just been loaded, so freshness isn't a concern). Exposed
+// publicly because the field-level `getBool` is package-private and the
+// only external need is this one logging path.
+func (s *SystemSettings) RawLocalLoginOffFromSnapshot() bool {
+	return s.getBool("login", "local_off", false)
 }
 
 // SupportEmail returns the From address used by the SMTP sender.

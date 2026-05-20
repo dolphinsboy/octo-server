@@ -132,7 +132,9 @@ func (cn *Common) Route(r *wkhttp.WKHttp) {
 	// 启动期校验:DB 已写入 login.local_off=1 但部署没有任何第三方登录
 	// 提供方,LocalLoginOff() 会自动回退为 false 避免锁死。把这个状态作为
 	// error 日志显式打出,让运维一眼能看到"开关写了但当前不生效"。
-	cn.systemSettings.LogLocalLoginOffSafetyOverrideIfActive()
+	// 此处直接读 snapshot 是安全的:Load 刚刚完成,值就是 DB 当前值。
+	cn.systemSettings.LogLocalLoginOffSafetyOverrideIfActive(
+		cn.systemSettings.RawLocalLoginOffFromSnapshot())
 }
 
 // 获取后台运行引导视频
