@@ -220,9 +220,22 @@ type Message struct {
 	threadDB       *thread.DB
 	// groupDB: 直查 group 表，区分"群不存在"和"群已解散"两种 404 情况，
 	// groupService.GetGroupWithGroupNo 把 nil 也包成 error 不便分辨。
-	groupDB *group.DB
-	mutex          sync.Mutex
-	stopChan       chan struct{}
+	groupDB  *group.DB
+	mutex    sync.Mutex
+	stopChan chan struct{}
+	// reminderSeqOverride lets unit tests stub the version generator
+	// used by getReminders so the matrix helpers can run without
+	// standing up the seq table / MySQL. Production path: nil →
+	// ctx.GenSeq(common.RemindersKey) runs. Tests inject a
+	// deterministic counter so the matrix tests in
+	// api_reminders_test.go don't need a live DB. See nextReminderSeq.
+	//
+	// Scope: getReminders + reminderDone only (everything wired through
+	// nextReminderSeq). cancelMentionReminderIfNeed and other in-tree
+	// callers still call ctx.GenSeq directly — those paths are not
+	// exercised by the matrix suite, so widening the seam there is
+	// deliberately deferred to keep the diff minimal.
+	reminderSeqOverride func() (int64, error)
 }
 
 // New New
@@ -440,6 +453,25 @@ func (m *Message) sendMsg(c *wkhttp.Context) {
 // （YUJ-644 / Mininglamp-OSS#33）。空串 senderSpaceID 表示发送方未声明 Space
 // （非 Space 模式 / 老客户端兼容），PERSONAL 走老 passthrough 行为。
 func (m *Message) sendMessage(channelID string, channelType uint8, fromUID string, payload map[string]interface{}, senderSpaceID string) error {
+	// PR#82 R8 (Jerry-Xin 2026-05-19 review on head 244fe9fa): strip any
+	// reserved `__obo_*` top-level key from the user-supplied payload
+	// BEFORE persistence/dispatch. See sanitizeUserIngressPayload below
+	// for the full rationale and unit test surface.
+	sanitizeUserIngressPayload(payload, channelID, channelType, fromUID, m.Warn)
+	// YUJ-202 / Mininglamp-OSS#94 — mention three-state rewrite
+	// (方案 X step §5 of docs/2026-05-mention-all-chokepoint-audit.md).
+	// Legacy clients still send `mention.all=1` for "@所有人"; the
+	// chokepoint normalizes that to also carry `mention.ais=1` (Plan X
+	// / YUJ-1389) so legacy `@所有人` automatically fans out to all AI
+	// bots without an SDK update, AND keeps `all=1` in place as an
+	// outbound double-write for old read-side clients that only
+	// understand `all`. `mention.humans=1` is NEVER inferred from
+	// legacy `all=1` — humans is the explicit human-notification signal
+	// and must be set by the client (Yu D1 — legacy "@所有人" must NOT
+	// auto-tag humans). Helper is idempotent and safe on nil /
+	// malformed mention shapes — see pkg/mentionrewrite/rewrite.go for
+	// the contract.
+	payload = RewriteMention(payload)
 	// YUJ-219-A / GH#1283 (analysis-report.md §4.5 / §7.4)：
 	// 派发前为消息 payload 注入权威 space_id，让客户端 SpaceFilter 拿到可信字段，
 	// race 窗口的 fail-open 语义可降级为 fail-closed。

@@ -29,6 +29,7 @@ import (
 	"github.com/Mininglamp-OSS/octo-server/modules/file"
 	"github.com/Mininglamp-OSS/octo-server/modules/group"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
+	"github.com/Mininglamp-OSS/octo-server/pkg/mentionrewrite"
 	pkgutil "github.com/Mininglamp-OSS/octo-server/pkg/util"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis"
@@ -40,17 +41,35 @@ import (
 
 // IService 为其他模块提供的窄接口，避免持有完整 *Robot 以及由此产生的循环依赖。
 // YUJ-60: 允许 bot 创建者撤回自己 bot 发的消息时，由 message 模块注入并调用。
+//
+// YUJ-1424 (PR#82 Jerry-Xin review blocker, 2026-05-20): EnqueueBotEvent
+// exposes the bot event queue write so cross-module callers (specifically
+// the OBO fan-out path in modules/bot_api) can deliver synthetic events
+// without going through WuKongIM → webhook → NotifyMessagesListeners.
+// The webhook drops NoPersist=1 messages before notifying listeners
+// (modules/webhook/api.go handleMessageNotify, by design — see the
+// content-type-contract comment in modules/bot_api/obo_fanout.go), so
+// the OBO fan-out copy (which intentionally sets NoPersist=1 to keep the
+// copy out of chat history) never reaches the bot event queue. Direct
+// enqueue bypasses that filter.
 type IService interface {
 	// GetCreatorUID 带缓存地查询机器人的创建者 UID。
 	// 机器人不存在或无 creator_uid 时返回空字符串及 nil error；
 	// 仅在底层查询异常时才返回 error。
 	GetCreatorUID(robotID string) (string, error)
+	// EnqueueBotEvent appends a synthetic event for `robotID` to the bot
+	// event queue consumed by /v1/bot/events. Mirrors the schema used by
+	// (*Robot).saveRobotMessage so /v1/bot/events serves both organic and
+	// synthetic events transparently. Returns an error only when the
+	// Redis ZADD / GenSeq call fails.
+	EnqueueBotEvent(robotID string, message *config.MessageResp) error
 }
 
 // Service robot 模块对外暴露的只读服务实现，供其它模块注入使用。
 // 与 *Robot 共享底层表结构，但不承担消息/事件监听等副作用，
 // 因此可以被重复 New 出来而不会导致重复注册 listener。
 type Service struct {
+	ctx          *config.Context
 	db           *robotDB
 	creatorCache sync.Map // robotID -> creatorUID
 }
@@ -58,7 +77,8 @@ type Service struct {
 // NewService 构造一个只读 robot 服务，满足 IService 接口。
 func NewService(ctx *config.Context) IService {
 	return &Service{
-		db: newBotDB(ctx),
+		ctx: ctx,
+		db:  newBotDB(ctx),
 	}
 }
 
@@ -92,6 +112,60 @@ func (rb *Robot) GetCreatorUID(robotID string) (string, error) {
 		return "", err
 	}
 	return uid, nil
+}
+
+// EnqueueBotEvent — IService — synthetic-event delivery path. See the
+// IService docstring for the YUJ-1424 / PR#82 R-blocker rationale. The
+// queue schema (key, score, payload shape, expiry) MUST match
+// (*Robot).saveRobotMessage exactly; if that helper's wire format ever
+// changes, update both sites in lockstep so /v1/bot/events serves
+// synthetic and organic events identically.
+func (s *Service) EnqueueBotEvent(robotID string, message *config.MessageResp) error {
+	return enqueueBotEventGeneric(s.ctx, robotID, message)
+}
+
+// EnqueueBotEvent — IService — *Robot variant. Delegates to the same
+// helper used by saveRobotMessage / Service.EnqueueBotEvent so the
+// queue write semantics cannot drift between the listener fast-path and
+// the cross-module synthetic path.
+func (rb *Robot) EnqueueBotEvent(robotID string, message *config.MessageResp) error {
+	return enqueueBotEventGeneric(rb.ctx, robotID, message)
+}
+
+// enqueueBotEventGeneric is the shared write-to-bot-event-queue helper
+// used by saveRobotMessage (listener path) and EnqueueBotEvent (cross-
+// module synthetic path). Centralizing the GenSeq / ZAdd / Expire shape
+// here means the bot event consumer (/v1/bot/events) sees identical
+// records regardless of which path produced them.
+func enqueueBotEventGeneric(ctx *config.Context, robotID string, message *config.MessageResp) error {
+	if ctx == nil {
+		return errors.New("robot: nil ctx, cannot enqueue bot event")
+	}
+	if strings.TrimSpace(robotID) == "" {
+		return errors.New("robot: empty robotID, cannot enqueue bot event")
+	}
+	if message == nil {
+		return errors.New("robot: nil message, cannot enqueue bot event")
+	}
+	seq, err := ctx.GenSeq(fmt.Sprintf("%s%s", common.RobotEventSeqKey, robotID))
+	if err != nil {
+		return err
+	}
+	messageUpdateJson := util.ToJson(&robotEvent{
+		EventID: seq,
+		Message: message,
+		Expire:  time.Now().Add(ctx.GetConfig().Robot.MessageExpire).Unix(),
+	})
+	key := fmt.Sprintf("robotEvent:%s", robotID)
+	if err := ctx.GetRedisConn().ZAdd(key, float64(seq), messageUpdateJson); err != nil {
+		return err
+	}
+	if err := ctx.GetRedisConn().Expire(key, ctx.GetConfig().Robot.MessageExpire); err != nil {
+		// Best-effort TTL refresh — do not fail the enqueue. Mirrors
+		// saveRobotMessage which also only logs on Expire failure.
+		return nil
+	}
+	return nil
 }
 
 type Robot struct {
@@ -317,6 +391,20 @@ func (rb *Robot) sendMessage(c *wkhttp.Context) {
 		return
 	}
 
+	// YUJ-1393 / PR#82 review #2 R1 (Jerry-Xin 2026-05-19 follow-up):
+	// strip any reserved `__obo_*` top-level key from the robot-supplied
+	// payload BEFORE validation / dispatch. The legacy robot endpoint
+	// was previously the only one of the three ingress points (user /
+	// bot / robot) that let `__obo_processed__: true` through unmodified,
+	// which a misbehaving / malicious robot script could exploit to
+	// suppress its own persona-clone fan-out copy (fan-out gate 3 in
+	// modules/bot_api/obo_fanout.go drops any payload carrying the
+	// marker). See modules/robot/sanitize_robot_ingress.go for the full
+	// rationale, the test surface, and why this ingress follows the
+	// silent-strip precedent set by the user API rather than the loud
+	// 4xx-reject precedent set by the bot API.
+	sanitizeRobotIngressPayload(messageReq.Payload, messageReq.ChannelID, messageReq.ChannelType, robotID, rb.Warn)
+
 	payloadResult := maputil.Data(messageReq.Payload)
 	contentTypeValue := payloadResult.Int("type")
 	if contentTypeValue == 0 {
@@ -349,6 +437,20 @@ func (rb *Robot) sendMessage(c *wkhttp.Context) {
 	if messageReq.ChannelType == common.ChannelTypePerson.Uint8() {
 		payload = rb.enrichBotPayloadWithSpaceID(robotID, payload)
 	}
+
+	// YUJ-202 / Mininglamp-OSS#94 — mention three-state rewrite. Same
+	// chokepoint contract as the user and bot API ingresses: legacy
+	// `mention.all=1` is normalized (Plan X / YUJ-1389) to also carry
+	// `mention.ais=1`, with `all=1` preserved on the outbound payload
+	// for old read-side clients (double-write). `mention.humans=1` is
+	// NEVER inferred from legacy `all=1` — humans is the explicit human-
+	// notification signal and must be set by the client. ⚠️ F2 (PR#70
+	// Jerry-Xin correctness-critical review): MUST stay OUTSIDE the
+	// `ChannelTypePerson` conditional above so group / community-topic
+	// `@所有人` traffic (the main pain-point) actually goes through the
+	// chokepoint. Helper is idempotent and safe on nil —
+	// see pkg/mentionrewrite.
+	payload = mentionrewrite.RewriteMention(payload)
 
 	result, err := rb.ctx.SendMessageWithResult(&config.MsgSendReq{
 		StreamNo:    messageReq.StreamNo,

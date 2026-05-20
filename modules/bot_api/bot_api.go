@@ -3,14 +3,15 @@ package bot_api
 import (
 	"fmt"
 
-	"github.com/Mininglamp-OSS/octo-server/modules/file"
-	"github.com/Mininglamp-OSS/octo-server/modules/group"
-	"github.com/Mininglamp-OSS/octo-server/modules/thread"
-	"github.com/Mininglamp-OSS/octo-server/modules/user"
-	"github.com/Mininglamp-OSS/octo-server/modules/voice"
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp"
+	"github.com/Mininglamp-OSS/octo-server/modules/file"
+	"github.com/Mininglamp-OSS/octo-server/modules/group"
+	"github.com/Mininglamp-OSS/octo-server/modules/robot"
+	"github.com/Mininglamp-OSS/octo-server/modules/thread"
+	"github.com/Mininglamp-OSS/octo-server/modules/user"
+	"github.com/Mininglamp-OSS/octo-server/modules/voice"
 )
 
 const (
@@ -32,9 +33,20 @@ type BotAPI struct {
 	groupService  group.IService
 	userDB        *user.DB
 	threadService thread.IService
-	voiceDB       *voice.VoiceDB
-	voiceSvc      *voice.VoiceService
-	voiceCfg      *voice.VoiceConfig
+	// robotService gives the OBO fan-out path a way to enqueue synthetic
+	// events directly into a grantee bot's /v1/bot/events queue. The
+	// webhook layer drops NoPersist=1 messages before NotifyMessagesListeners
+	// (modules/webhook/api.go handleMessageNotify), and the OBO fan-out
+	// copy intentionally sets NoPersist=1 to keep the copy out of chat
+	// history. Without a direct enqueue, the fan-out copy reaches
+	// WuKongIM but never reaches the bot — see YUJ-1424 / PR#82
+	// Jerry-Xin review blocker. fanoutForMessage calls robotService
+	// AFTER dispatchFanout succeeds so we only enqueue events that
+	// WuKongIM actually accepted.
+	robotService robot.IService
+	voiceDB      *voice.VoiceDB
+	voiceSvc     *voice.VoiceService
+	voiceCfg     *voice.VoiceConfig
 	// spaceQuerier overrides ba.db for resolveBotActiveSpaceID (test injection).
 	// nil in production; tests set it to stub the DB call deterministically.
 	spaceQuerier botSpaceQuerier
@@ -42,6 +54,43 @@ type BotAPI struct {
 	// final MsgSendReq (including server-authoritative payload.space_id).
 	// nil in production; the real path goes through ba.ctx.SendMessageWithResult.
 	dispatchOverride func(*config.MsgSendReq) (*config.MsgSendResp, error)
+	// oboStoreOverride lets unit tests inject an in-memory oboStore so
+	// checkOBO / REST handlers / fan-out can run without standing up MySQL.
+	// nil in production; the real path uses ba.db (which satisfies oboStore).
+	// See modules/bot_api/obo_db.go for the interface contract.
+	oboStoreOverride oboStore
+	// oboFanoutDispatch lets unit tests intercept the per-grantee copy that
+	// the fan-out listener would otherwise hand to ba.ctx.SendMessage. The
+	// production path delegates to ba.dispatchMsgSendReq so the existing
+	// dispatchOverride hook keeps capturing sends in handler tests.
+	// nil in production.
+	oboFanoutDispatch func(*config.MsgSendReq) error
+	// oboFanoutBotEnqueue lets unit tests intercept the bot-event-queue
+	// enqueue that fanoutForMessage performs after a successful dispatch.
+	// Without this seam, fan-out tests would need a live Redis to assert
+	// the synthetic event reaches /v1/bot/events. The production path
+	// goes through ba.robotService.EnqueueBotEvent (see YUJ-1424 / PR#82
+	// Jerry-Xin blocker for why direct enqueue is necessary at all).
+	// nil in production → robotService path runs.
+	oboFanoutBotEnqueue func(robotID string, message *config.MessageResp) error
+	// oboChannelAccessOverride lets unit tests stub the grantor channel-
+	// access check used by oboCreateScope (PR#82 review P0 — channel-wiretap
+	// fix). Production path runs grantorCanReadChannel, which queries
+	// group_member + userService.IsFriend; tests that build BotAPI without
+	// a live DB session set this hook to deterministically accept or reject
+	// (uid, channel_id, channel_type) without touching MySQL.
+	// nil in production → the real DB-backed check runs.
+	oboChannelAccessOverride func(uid, channelID string, channelType uint8) (bool, error)
+	// friendCheckOverride lets unit tests stub userService.IsFriend for the
+	// friend-gate decision in checkSendPermission / syncMessages, and for
+	// the OBO friend-gate bypass (see obo_friend_gate.go). Production path
+	// uses ba.userService.IsFriend; tests that build BotAPI without a live
+	// user service set this hook to deterministically accept or reject
+	// (uid, toUID) without touching MySQL. PR#82 R6 P0 — managed-persona
+	// OBO friend-gate bypass needs to be testable end-to-end without the
+	// full user-service stack.
+	// nil in production → the real userService.IsFriend runs.
+	friendCheckOverride func(uid, toUID string) (bool, error)
 	log.Log
 }
 
@@ -57,7 +106,7 @@ func (ba *BotAPI) dispatchMsgSendReq(req *config.MsgSendReq) (*config.MsgSendRes
 // NewBotAPI creates the Bot API gateway module.
 func NewBotAPI(ctx *config.Context) *BotAPI {
 	voiceCfg := voice.NewVoiceConfigFromEnv()
-	return &BotAPI{
+	ba := &BotAPI{
 		ctx:           ctx,
 		db:            newBotAPIDB(ctx),
 		userService:   user.NewService(ctx),
@@ -65,11 +114,20 @@ func NewBotAPI(ctx *config.Context) *BotAPI {
 		groupService:  group.NewService(ctx),
 		userDB:        user.NewDB(ctx),
 		threadService: thread.NewService(ctx),
+		robotService:  robot.NewService(ctx),
 		voiceDB:       voice.NewVoiceDB(ctx),
 		voiceSvc:      voice.NewVoiceService(voiceCfg),
 		voiceCfg:      voiceCfg,
 		Log:           log.NewTLog("BotAPI"),
 	}
+	// YUJ-1166 / Mininglamp-OSS/octo-server#81 — Persona Clone fan-out.
+	// Subscribed AFTER the dependency wiring above so oboMessagesListen
+	// can safely consult ba.db (oboStore). Idempotent: the listener
+	// short-circuits when no grants exist for the message's channel.
+	if ctx != nil {
+		ctx.AddMessagesListener(ba.oboMessagesListen)
+	}
+	return ba
 }
 
 // Route registers all Bot API routes.
@@ -129,6 +187,11 @@ func (ba *BotAPI) Route(r *wkhttp.WKHttp) {
 		botFileAPI.GET("/*path", ba.botProxyFile)
 		botFileAPI.POST("/upload", ba.botUploadFile)
 	}
+
+	// YUJ-1166 / Mininglamp-OSS/octo-server#81 — Persona Clone (OBO) REST.
+	// User-token endpoints under /v1/obo. Implementation in obo_api.go;
+	// the call is split out so this Route function doesn't grow further.
+	ba.registerOBORoutes(r)
 }
 
 // ==================== Helper Functions ====================
@@ -164,5 +227,3 @@ func (ba *BotAPI) clearTypingThrottle(robotID string, channelID string, channelT
 	ba.ctx.GetRedisConn().Del(typingStartKey)
 	ba.ctx.GetRedisConn().Del(typingCountKey)
 }
-
-
