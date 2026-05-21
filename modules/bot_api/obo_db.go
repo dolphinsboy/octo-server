@@ -15,11 +15,20 @@
 //     short-circuits the (grantor, bot) MySQL probe
 //     that checkOBO would otherwise issue per send.
 //   - obo:chan:{ctype}:{cid}   "1" channel has at least one (active grant ×
-//     enabled scope) match; "0" no match. Read by
-//     findActiveGrantsForChannel — negative answer
+//     enabled scope) match; "0" no match. Read AND
+//     written ONLY by the unfiltered
+//     `findActiveGrantsForChannel` — negative answer
 //     short-circuits the JOIN that the fan-out
 //     listener would otherwise issue per inbound
-//     message system-wide.
+//     message system-wide. The filtered sibling
+//     `findActiveGrantsForChannelByGrantors`
+//     deliberately bypasses this key in BOTH
+//     directions (PR#114 R4): its result is a
+//     UID-scoped subset, so it cannot prove the
+//     channel-wide negative answer the cache
+//     encodes, and reading a write from the
+//     unfiltered path against a same-string DM key
+//     would suppress legitimate group fan-outs.
 //
 // Both keys are negative-cache friendly: a "0" answer returned within the
 // 30-second TTL eliminates the MySQL round-trip entirely. Writes that can
@@ -39,9 +48,45 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Mininglamp-OSS/octo-lib/common"
 	"github.com/go-sql-driver/mysql"
 	"github.com/gocraft/dbr/v2"
 )
+
+// isGroupLikeChannelType reports whether channelType is a "group-shaped"
+// type (Group / CommunityTopic) for which an OBO grant with
+// `global_enabled=1` covers EVERY group/topic the grantor participates in
+// without requiring a per-channel `obo_scopes` row.
+//
+// YUJ-1538 rationale: PR#82 / PR#109 v1+v2 modeled scopes as a strict
+// white-list — the grantor explicitly enumerated each channel they
+// wanted the persona to observe. In practice operators only ever
+// installed `channel_type=1` (DM) scopes; for groups the v2 fan-out
+// narrowing gate (`mention.uids` must contain the grantor) is the
+// effective opt-in signal, not a scope row. The fan-out trigger query
+// must therefore not require scope rows for group/topic channels — a
+// `global_enabled=1` grant suffices, and the per-grant
+// `grantorCanReadChannel` re-check inside fanoutForMessage still
+// enforces live membership.
+//
+// DM (Person) channels keep the strict scope-row contract: a DM is a
+// 1:1 conversation that the persona must be explicitly authorized for,
+// and the @grantor narrowing gate cannot be applied (DM payloads carry
+// no mention).
+//
+// PR#114 R3 update — `checkOBO` (the third-party reply send path) was
+// widened symmetrically in the same PR: for group-like channel types
+// it ALSO skips the scope-row requirement when the grant has
+// `global_enabled=1`, so a fan-out copy delivered into a group reaches
+// the bot AND the bot's OBO reply succeeds. The previous version of
+// this comment claimed `checkOBO` still required the scope row "regardless
+// of channel type" — true for the v1 ship but stale after the PR#114
+// commit `fix(obo): checkOBO skips scope check for group-like channels`.
+// DM (Person) `checkOBO` does still require the per-peer scope row.
+func isGroupLikeChannelType(channelType uint8) bool {
+	return channelType == common.ChannelTypeGroup.Uint8() ||
+		channelType == common.ChannelTypeCommunityTopic.Uint8()
+}
 
 // ==================== Models ====================
 
@@ -110,8 +155,24 @@ type oboScopeModel struct {
 //     enabled=0, or the grant_id doesn't exist. The hot path on sendMessage
 //     only needs a boolean.
 //   - findActiveGrantsForChannel: feeder for the fan-out listener; returns
-//     active+global_enabled grants whose scope row matches the channel and
-//     enabled=1. Empty slice (not nil) on no match keeps callers branch-free.
+//     active+global_enabled grants for the channel. Channel-type-aware
+//     (YUJ-1538 / PR#114): for DM (Person) the scope row is still
+//     required (strict per-peer white-list); for group-like channel
+//     types (Group / CommunityTopic) a `global_enabled=1` grant alone
+//     suffices and no `obo_scopes` row is consulted — the per-message
+//     v2 narrowing gate (`@grantor` / `mention.all=1`) and the
+//     `grantorCanReadChannel` re-check carry the opt-in. Empty slice
+//     (not nil) on no match keeps callers branch-free.
+//   - findActiveGrantsForChannelByGrantors: PR#114 R3. Same shape as
+//     findActiveGrantsForChannel for group-like channels but adds a
+//     `grantor_uid IN (...)` filter so the fan-out hot path can
+//     restrict the system-wide scan to the explicit @mentioned UIDs
+//     decoded from `payload.mention.uids`. Used ONLY for group-like
+//     channels with explicit @uids — `mention.all` (@所有人) still goes
+//     through the unfiltered method (see fanoutForMessage doc for the
+//     trade-off). An empty / nil grantorUIDs slice returns an empty
+//     result without touching MySQL — callers should early-return on
+//     the no-mention case instead of paying a wasted query.
 type oboStore interface {
 	findActiveGrantByGrantorBot(grantorUID, granteeBotUID string) (*oboGrantModel, error)
 	// findGrantByGrantorBotActiveOnly — YUJ-1428. Same shape as
@@ -140,6 +201,15 @@ type oboStore interface {
 	findGrantByGrantorBotActiveOnly(grantorUID, granteeBotUID string) (*oboGrantModel, error)
 	scopeEnabled(grantID int64, channelID string, channelType uint8) (bool, error)
 	findActiveGrantsForChannel(channelID string, channelType uint8) ([]*oboGrantModel, error)
+	// findActiveGrantsForChannelByGrantors — PR#114 R3 (Jerry-Xin).
+	// Group-like-only fan-out lookup that filters at the DB layer by the
+	// explicit `mention.uids` set. Returns the subset of grants where
+	// `g.grantor_uid IN (grantorUIDs)` AND `g.active=1 AND
+	// g.global_enabled=1`. An empty / nil grantorUIDs slice returns an
+	// empty result with no DB round-trip — callers should treat the
+	// "no mentions" case at the fan-out layer instead of asking the DB.
+	// DM (Person) MUST NOT call this method (no mention semantics on DMs).
+	findActiveGrantsForChannelByGrantors(channelID string, channelType uint8, grantorUIDs []string) ([]*oboGrantModel, error)
 
 	// CRUD used by the REST layer
 	insertGrant(grantorUID, granteeBotUID, mode, personaPrompt string) (int64, error)
@@ -225,7 +295,10 @@ const (
 	// have at least one (active grant × enabled scope) match". The fan-out
 	// listener consults this scalar before the JOIN it would otherwise
 	// issue per inbound message system-wide. Population: written on every
-	// findActiveGrantsForChannel result (count 0 → "0", count >0 → "1").
+	// UNFILTERED findActiveGrantsForChannel result (count 0 → "0",
+	// count >0 → "1"). The filtered sibling
+	// findActiveGrantsForChannelByGrantors MUST NOT write here — see
+	// PR#114 R4 and the function doc for the poisoning scenario.
 	// Eviction: insertScope / deleteScope (the only operations that can
 	// flip the answer for a given channel within the TTL window).
 	oboChannelActiveCacheKeyFmt = "obo:chan:%d:%s"
@@ -312,16 +385,46 @@ func (d *botAPIDB) scopeEnabled(grantID int64, channelID string, channelType uin
 	return count > 0, nil
 }
 
-// findActiveGrantsForChannel — see oboStore. Single JOIN so the fan-out
-// hot path doesn't have to issue a per-grant scope lookup.
+// findActiveGrantsForChannel — see oboStore. Single index-hit so the
+// fan-out hot path doesn't have to issue a per-grant scope lookup.
 //
 // Read path consults `obo:chan:{type}:{id}` first. A cached "0" answer
 // returns an empty slice without touching MySQL — the fan-out listener
 // fires for every inbound message system-wide, so the vast majority of
-// channels (those with no OBO grants) avoid the JOIN entirely. Positive
+// channels (those with no OBO grants) avoid the lookup entirely. Positive
 // hits and MySQL fallback both repopulate the cache with the count-based
 // scalar ("1" any matches, "0" none). Cache errors swallowed; production
 // behavior is identical whether Redis is healthy or absent.
+//
+// YUJ-1538 — channel-type-aware lookup:
+//
+//   - DM (Person, channel_type=1): keeps the strict
+//     `obo_grants ⨝ obo_scopes` JOIN. DMs are 1:1 conversations and the
+//     persona must be explicitly white-listed per peer. This is the
+//     pre-existing contract and is unchanged.
+//
+//   - Group (channel_type=2) / CommunityTopic (channel_type=5): a grant
+//     with `active=1 AND global_enabled=1` covers EVERY group/topic the
+//     grantor participates in, WITHOUT requiring an `obo_scopes` row.
+//     v2 narrowing (`mention.uids` must contain the grantor, or
+//     `mention.all=1`) is the effective per-message opt-in instead of a
+//     scope row, and the per-grant `grantorCanReadChannel` re-check in
+//     fanoutForMessage still enforces live channel membership. The bug
+//     PR#109 left behind: `obo_scopes` only ever held `channel_type=1`
+//     rows in production (operators never created group scopes), so the
+//     INNER JOIN returned zero matches for every group inbound and the
+//     fan-out copy never reached the bot — even though `checkOBO` had
+//     already been updated to bypass the scope check for groups.
+//
+// Cache notes (group/topic): the per-channel cache key still gates the
+// hot path. When the FIRST `global_enabled=1` grant is enabled in a
+// previously-empty system, group channel cache entries holding a stale
+// "0" remain so for at most `oboCacheTTL` (30s); after that the next
+// inbound re-queries MySQL and the cache flips. Per-channel
+// invalidation of group caches at grant-enable time would require
+// enumerating every group the grantor participates in, which is more
+// work than the bounded warmup window saves; the same 30s TTL was the
+// design's accepted risk in RFC §11.
 func (d *botAPIDB) findActiveGrantsForChannel(channelID string, channelType uint8) ([]*oboGrantModel, error) {
 	if channelID == "" {
 		return []*oboGrantModel{}, nil
@@ -330,12 +433,32 @@ func (d *botAPIDB) findActiveGrantsForChannel(channelID string, channelType uint
 		return []*oboGrantModel{}, nil
 	}
 	var grants []*oboGrantModel
-	_, err := d.session.SelectBySql(
-		"SELECT g.* FROM obo_grants g INNER JOIN obo_scopes s ON s.grant_id=g.id "+
-			"WHERE g.active=1 AND g.global_enabled=1 AND s.enabled=1 "+
-			"AND s.channel_id=? AND s.channel_type=?",
-		channelID, channelType,
-	).Load(&grants)
+	var err error
+	if isGroupLikeChannelType(channelType) {
+		// Group / CommunityTopic — `global_enabled=1` is sufficient,
+		// no scope row required. Returns every active+enabled grant
+		// system-wide; the per-grant `grantorCanReadChannel` re-check
+		// in the fan-out loop filters to grants whose grantor is
+		// actually a member of THIS group/topic. With the v2
+		// `uk_grantor_grantee` UNIQUE + create-mutex (PR#109), the
+		// number of active+enabled grants is bounded — at most one
+		// per grantor — so the fan-out cost is O(grantors) per
+		// inbound, not O(scopes).
+		_, err = d.session.SelectBySql(
+			"SELECT g.* FROM obo_grants g " +
+				"WHERE g.active=1 AND g.global_enabled=1",
+		).Load(&grants)
+	} else {
+		// DM (Person) and any other unrecognized channel type — keep
+		// the original strict JOIN so behavior is unchanged outside
+		// the group-like path.
+		_, err = d.session.SelectBySql(
+			"SELECT g.* FROM obo_grants g INNER JOIN obo_scopes s ON s.grant_id=g.id "+
+				"WHERE g.active=1 AND g.global_enabled=1 AND s.enabled=1 "+
+				"AND s.channel_id=? AND s.channel_type=?",
+			channelID, channelType,
+		).Load(&grants)
+	}
 	if err != nil && !errors.Is(err, dbr.ErrNotFound) {
 		return nil, err
 	}
@@ -343,6 +466,94 @@ func (d *botAPIDB) findActiveGrantsForChannel(channelID string, channelType uint
 		grants = []*oboGrantModel{}
 	}
 	d.writeChannelCache(channelID, channelType, len(grants) > 0)
+	return grants, nil
+}
+
+// findActiveGrantsForChannelByGrantors — PR#114 R3 (Jerry-Xin perf
+// blocker). Same shape as `findActiveGrantsForChannel` for group-like
+// channels but scoped at the DB layer to the explicit `grantorUIDs`
+// set decoded from `payload.mention.uids`. The fan-out hot path uses
+// this when an inbound group message carries an explicit @grantor
+// mention so we never load grants for OTHER grantors who weren't
+// mentioned.
+//
+// Why this matters (Jerry-Xin's perf flag): the v2 group lookup loads
+// EVERY active+global_enabled grant system-wide and then post-filters
+// in Go, so every inbound group message — even plain text or @AI —
+// would otherwise pay an O(grants_total) DB scan. With this method
+// the DB returns at most `len(grantorUIDs)` rows (uk_grantor_grantee
+// guarantees one row per grantor), so the cost is O(mentioned_grantors)
+// per inbound and the unmentioned grantors never leave their index page.
+//
+// Behavior:
+//   - DM / Person (or any non-group-like type) → empty slice + nil
+//     error. Callers must NOT use this for DMs (no mention semantics).
+//   - Empty / nil grantorUIDs → empty slice + nil error WITHOUT a DB
+//     round-trip. The caller's early-return path should mean we never
+//     reach this branch, but the guard makes the contract self-evident.
+//   - channelID == "" → empty slice + nil error (defensive).
+//
+// Cache: this method MUST NOT touch the `obo:chan:{type}:{id}`
+// channel-wide scalar in either direction (PR#114 R4 — Jerry-Xin /
+// lml2468 cache-poisoning blocker, 2026-05-21).
+//
+// Why no WRITE: the cache key answers "does this channel have ANY
+// active grant × enabled scope" — a CHANNEL-WIDE property. This
+// method's result is a UID-filtered subset, so a zero result here
+// only proves "none of the mentioned grantors have a grant", NOT
+// "the channel has no grants". Writing "0" after a filtered miss
+// would poison the cache for the NEXT inbound that mentions a
+// different grantor who DOES have a grant — the channelCacheSaysNone
+// short-circuit at the top of `findActiveGrantsForChannel` (or any
+// other consumer) would early-return empty and suppress the fan-out.
+//
+// Why no READ: the same cache key may legitimately hold "0" written
+// by the unfiltered `findActiveGrantsForChannel` for a channelID that
+// happens to share its string with this method's group ID (DM peer
+// uids and group ids live in the same Redis namespace). Honoring
+// that "0" here would incorrectly suppress a group query whose
+// mentioned-grantor SET we have not actually probed against MySQL.
+//
+// The unfiltered `findActiveGrantsForChannel` (used by the DM path
+// and the `@所有人` group broadcast path) still manages the channel
+// cache correctly because its result IS the channel-wide truth.
+func (d *botAPIDB) findActiveGrantsForChannelByGrantors(channelID string, channelType uint8, grantorUIDs []string) ([]*oboGrantModel, error) {
+	if channelID == "" || len(grantorUIDs) == 0 {
+		return []*oboGrantModel{}, nil
+	}
+	if !isGroupLikeChannelType(channelType) {
+		// Method is group-like-only by contract; defensive return so a
+		// caller wiring this on the DM path can't silently widen access.
+		return []*oboGrantModel{}, nil
+	}
+	// Intentionally NO channelCacheSaysNone check here — see the
+	// "Why no READ" paragraph in the doc comment above.
+
+	// Build the IN (...) placeholder list. dbr's positional binding
+	// expands a `[]interface{}` arg into the right number of `?` for
+	// the query, but we need to construct the literal placeholder
+	// string ourselves because the dbr SelectBySql shape in this file
+	// uses positional `?` markers.
+	placeholders := make([]string, len(grantorUIDs))
+	args := make([]interface{}, 0, len(grantorUIDs))
+	for i, uid := range grantorUIDs {
+		placeholders[i] = "?"
+		args = append(args, uid)
+	}
+
+	var grants []*oboGrantModel
+	q := "SELECT g.* FROM obo_grants g " +
+		"WHERE g.active=1 AND g.global_enabled=1 " +
+		"AND g.grantor_uid IN (" + strings.Join(placeholders, ",") + ")"
+	_, err := d.session.SelectBySql(q, args...).Load(&grants)
+	if err != nil && !errors.Is(err, dbr.ErrNotFound) {
+		return nil, err
+	}
+	if grants == nil {
+		grants = []*oboGrantModel{}
+	}
+	// Intentionally NO writeChannelCache call here — see the
+	// "Why no WRITE" paragraph in the doc comment above.
 	return grants, nil
 }
 
@@ -817,7 +1028,6 @@ func (d *botAPIDB) createOrReactivateGrantAtomic(grantorUID, granteeBotUID, mode
 
 	return grant, reactivated, nil
 }
-
 
 // O(grants × scopes_per_grant) scan that scopeOwnedBy used to perform
 // on every `DELETE /v1/obo/scopes/:id` (PR#82 review #2 P1-3).
