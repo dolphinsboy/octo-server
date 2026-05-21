@@ -2,6 +2,9 @@ package bot_api
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
@@ -11,7 +14,7 @@ import (
 	"github.com/Mininglamp-OSS/octo-server/modules/robot"
 	"github.com/Mininglamp-OSS/octo-server/modules/thread"
 	"github.com/Mininglamp-OSS/octo-server/modules/user"
-	"github.com/Mininglamp-OSS/octo-server/modules/voice"
+	"github.com/Mininglamp-OSS/octo-server/modules/voice_adapter"
 )
 
 const (
@@ -26,13 +29,13 @@ const (
 // BotAPI is the public Bot API gateway module.
 // It handles all bot-facing endpoints (/v1/bot/*) with unified auth.
 type BotAPI struct {
-	ctx           *config.Context
-	db            *botAPIDB
-	userService   user.IService
-	fileService   file.IService
-	groupService  group.IService
-	userDB        *user.DB
-	threadService thread.IService
+	ctx                   *config.Context
+	db                    *botAPIDB
+	userService           user.IService
+	fileService           file.IService
+	groupService          group.IService
+	userDB                *user.DB
+	threadService         thread.IService
 	// robotService gives the OBO fan-out path a way to enqueue synthetic
 	// events directly into a grantee bot's /v1/bot/events queue. The
 	// webhook layer drops NoPersist=1 messages before NotifyMessagesListeners
@@ -43,10 +46,11 @@ type BotAPI struct {
 	// Jerry-Xin review blocker. fanoutForMessage calls robotService
 	// AFTER dispatchFanout succeeds so we only enqueue events that
 	// WuKongIM actually accepted.
-	robotService robot.IService
-	voiceDB      *voice.VoiceDB
-	voiceSvc     *voice.VoiceService
-	voiceCfg     *voice.VoiceConfig
+	robotService          robot.IService
+	speechClient          *voice_adapter.SpeechClient
+	maxVoiceContextLength int
+	maxBodySize           int64
+	maxFileSize           int64
 	// spaceQuerier overrides ba.db for resolveBotActiveSpaceID (test injection).
 	// nil in production; tests set it to stub the DB call deterministically.
 	spaceQuerier botSpaceQuerier
@@ -127,20 +131,51 @@ func (ba *BotAPI) dispatchMsgSendReq(req *config.MsgSendReq) (*config.MsgSendRes
 
 // NewBotAPI creates the Bot API gateway module.
 func NewBotAPI(ctx *config.Context) *BotAPI {
-	voiceCfg := voice.NewVoiceConfigFromEnv()
+	speechURL := os.Getenv(voice_adapter.EnvSpeechServiceURL)
+	speechKey := os.Getenv(voice_adapter.EnvSpeechAPIKey)
+	timeoutSec := voice_adapter.DefaultTimeoutSec
+	if v := os.Getenv(voice_adapter.EnvSpeechTimeout); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			timeoutSec = n
+		}
+	}
+	maxCtxLen := 10000
+	if v := os.Getenv("SPEECH_MAX_CONTEXT_LENGTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxCtxLen = n
+		}
+	} else if v := os.Getenv("VOICE_MAX_VOICE_CONTEXT_LENGTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxCtxLen = n
+		}
+	}
+	maxBodySize := int64(5 << 20)
+	if v := os.Getenv(voice_adapter.EnvSpeechMaxBodySize); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			maxBodySize = n
+		}
+	}
+	maxFileSize := int64(3 << 20)
+	if v := os.Getenv("SPEECH_MAX_FILE_SIZE"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			maxFileSize = n
+		}
+	}
+
 	ba := &BotAPI{
-		ctx:           ctx,
-		db:            newBotAPIDB(ctx),
-		userService:   user.NewService(ctx),
-		fileService:   file.NewService(ctx),
-		groupService:  group.NewService(ctx),
-		userDB:        user.NewDB(ctx),
-		threadService: thread.NewService(ctx),
-		robotService:  robot.NewService(ctx),
-		voiceDB:       voice.NewVoiceDB(ctx),
-		voiceSvc:      voice.NewVoiceService(voiceCfg),
-		voiceCfg:      voiceCfg,
-		Log:           log.NewTLog("BotAPI"),
+		ctx:                   ctx,
+		db:                    newBotAPIDB(ctx),
+		userService:           user.NewService(ctx),
+		fileService:           file.NewService(ctx),
+		groupService:          group.NewService(ctx),
+		userDB:                user.NewDB(ctx),
+		threadService:         thread.NewService(ctx),
+		robotService:          robot.NewService(ctx),
+		speechClient:          voice_adapter.NewSpeechClient(speechURL, speechKey, time.Duration(timeoutSec)*time.Second),
+		maxVoiceContextLength: maxCtxLen,
+		maxBodySize:           maxBodySize,
+		maxFileSize:           maxFileSize,
+		Log:                   log.NewTLog("BotAPI"),
 	}
 	// YUJ-1166 / Mininglamp-OSS/octo-server#81 — Persona Clone fan-out.
 	// Subscribed AFTER the dependency wiring above so oboMessagesListen
