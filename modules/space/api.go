@@ -1981,3 +1981,16 @@ func (s *Space) loadKnownSpaceIDs() {
 	spacepkg.RegisterSpaceIDs(ids)
 	s.Info("已注册 spaceId 到 ParseChannelID 缓存", zap.Int("count", len(ids)), zap.Strings("ids", ids))
 }
+
+// CreateDefaultSpace 为指定用户创建一个默认 Space，供系统引导路径调用
+// （如 SuperAdmin 首次启动时由 user 模块兜底创建，避免登录后无 Space 的死锁）。
+// JoinMode=0(直接加入)、MaxUsers=0(不限制)，与用户侧 createSpace 默认值一致。
+func (s *Space) CreateDefaultSpace(creatorUID, name string) error {
+	_, err := s.createSpaceCore(createSpaceParams{
+		Creator:  creatorUID,
+		Name:     name,
+		JoinMode: JoinModeDirect,
+		MaxUsers: 0,
+	})
+	return err
+}

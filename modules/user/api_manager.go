@@ -12,6 +12,7 @@ import (
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-server/modules/base/event"
 	common2 "github.com/Mininglamp-OSS/octo-server/modules/common"
+	"github.com/Mininglamp-OSS/octo-server/modules/space"
 	"github.com/Mininglamp-OSS/octo-server/pkg/auth"
 	spacepkg "github.com/Mininglamp-OSS/octo-server/pkg/space"
 	wkutil "github.com/Mininglamp-OSS/octo-server/pkg/util"
@@ -35,6 +36,7 @@ type Manager struct {
 	friendDB      *friendDB
 	onlineService IOnlineService
 	commonService common2.IService
+	spaceAPI      *space.Space
 }
 
 // NewManager NewManager
@@ -49,6 +51,7 @@ func NewManager(ctx *config.Context) *Manager {
 		userSettingDB: NewSettingDB(ctx.DB()),
 		onlineService: NewOnlineService(ctx),
 		commonService: common2.NewService(ctx),
+		spaceAPI:      space.New(ctx),
 	}
 	m.createManagerAccount()
 	return m
@@ -1168,7 +1171,13 @@ func (m *Manager) createManagerAccount() {
 		m.Error("查询系统管理账号错误", zap.Error(err))
 		return
 	}
-	if (user != nil && user.UID != "") || m.ctx.GetConfig().AdminPwd == "" {
+	adminExists := user != nil && user.UID != ""
+	if adminExists {
+		// Admin 行已存在（升级或重启场景）：幂等地补建 Space，修复 issue #105 死锁。
+		m.ensureAdminDefaultSpace()
+		return
+	}
+	if m.ctx.GetConfig().AdminPwd == "" {
 		return
 	}
 
@@ -1195,6 +1204,26 @@ func (m *Manager) createManagerAccount() {
 	if err != nil {
 		m.Error("新增系统管理员错误", zap.Error(err))
 		return
+	}
+	// 新装场景：InsertUser 已提交（非事务内），紧接着建默认 Space。
+	m.ensureAdminDefaultSpace()
+}
+
+// ensureAdminDefaultSpace 为 SuperAdmin 幂等地补建默认 Space。
+//
+// 背景(issue #105)：createManagerAccount 仅写 user 行，未建 Space + owner 成员。
+// SuperAdmin 首次登录时 GET /v1/space/my 返回 [] 触发 web 跳邀请码页，joinSpace
+// 又因"已是成员"被拒——形成死锁。该方法在启动时检查并补建（已有 Space 时幂等跳过）。
+//
+// 失败仅记 Warn 不阻塞主流程：用户账号已落库，Space 缺失可事后修复；
+// 让进程能起来比卡在 init 更重要。
+func (m *Manager) ensureAdminDefaultSpace() {
+	adminUID := m.ctx.GetConfig().Account.AdminUID
+	if spaceID := space.GetUserDefaultSpaceID(m.ctx, adminUID); spaceID != "" {
+		return
+	}
+	if err := m.spaceAPI.CreateDefaultSpace(adminUID, "默认空间"); err != nil {
+		m.Warn("创建管理员默认空间失败", zap.Error(err), zap.String("uid", adminUID))
 	}
 }
 func getShowPhoneNum(mobile string) string {
