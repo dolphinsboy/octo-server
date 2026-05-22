@@ -515,6 +515,68 @@ func (f *fakeOBOStore) updateGrant(id int64, mode string, globalEnabled *int, pe
 	return nil
 }
 
+// setGrantActive — YUJ-1728 / octo-server#129. In-memory analogue of
+// the prod tx; the outer mu serializes all writes so the activate
+// path's mutex semantics fall out naturally without an explicit lock
+// dance. Mirrors the prod implementation's two paths — pause is a
+// single-row mutation, activate flips the target then demotes every
+// other active grant under the same grantor. Demotion sets
+// active=0 / global_enabled=0 / revoked_at=now so the in-memory state
+// matches what createOrReactivateGrantAtomic also produces.
+//
+// YUJ-1738 / PR#131 R2 B2 — race guard parity: both paths short-
+// circuit when the loaded row already carries revoked_at != nil.
+// Without this, a test that interleaves revokeGrant + setGrantActive
+// would observe in-memory behavior diverging from prod (prod refuses
+// to resurrect; the fake would silently flip active back to 1).
+func (f *fakeOBOStore) setGrantActive(id int64, active int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ensureInit()
+	g, ok := f.grants[id]
+	if !ok {
+		return nil
+	}
+	// YUJ-1738 / PR#131 R2 B2 — refuse to mutate a tombstoned row
+	// in either direction. Pause on a revoked row is a no-op (it is
+	// already active=0); activate on a revoked row would resurrect
+	// it, which is exactly the DELETE-vs-PUT race the prod code now
+	// guards against in-tx.
+	if g.RevokedAt != nil {
+		return nil
+	}
+	v := 0
+	if active != 0 {
+		v = 1
+	}
+	if v == 0 {
+		g.Active = 0
+		return nil
+	}
+	g.Active = 1
+	g.RevokedAt = nil
+	for _, other := range f.grants {
+		if other == nil || other.ID == g.ID {
+			continue
+		}
+		if other.GrantorUID != g.GrantorUID {
+			continue
+		}
+		if other.Active != 1 {
+			continue
+		}
+		// YUJ-1744 / PR#131 R4 — siblings are PAUSED, not REVOKED.
+		// Skip rows the DELETE path already tombstoned (defensive),
+		// and never stamp revoked_at on rows we demote here.
+		if other.RevokedAt != nil {
+			continue
+		}
+		other.Active = 0
+		other.GlobalEnabled = 0
+	}
+	return nil
+}
+
 func (f *fakeOBOStore) revokeGrant(id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -644,7 +706,6 @@ func (f *fakeOBOStore) createOrReactivateGrantAtomic(grantorUID, granteeBotUID, 
 	var (
 		target      *oboGrantModel
 		reactivated bool
-		now         = time.Now()
 	)
 
 	if existing == nil {
@@ -680,13 +741,18 @@ func (f *fakeOBOStore) createOrReactivateGrantAtomic(grantorUID, granteeBotUID, 
 	}
 
 	// Demote every other active grant under the same grantor.
+	// YUJ-1744 / PR#131 R4 — siblings demoted by create/reactivate are
+	// PAUSED, not REVOKED. Leave revoked_at untouched (and skip rows a
+	// prior DELETE already tombstoned, defensive).
 	for _, g := range f.grants {
 		if g.GrantorUID != grantorUID || g.ID == target.ID || g.Active != 1 {
 			continue
 		}
+		if g.RevokedAt != nil {
+			continue
+		}
 		g.Active = 0
 		g.GlobalEnabled = 0
-		g.RevokedAt = &now
 	}
 
 	cp := *target
