@@ -132,10 +132,10 @@ func IsTrustedLangHeaderRequest(r *http.Request, cidrs []*net.IPNet) bool {
 }
 
 func normalizeDefaultLanguage(raw string) string {
-	if lang, ok := MatchSupportedLanguage(raw); ok {
+	if lang, err := ResolveDefaultLanguage(raw); err == nil {
 		return lang
 	}
-	return SourceLanguage
+	return DefaultLanguage
 }
 
 func matchAcceptLanguage(raw string) (string, bool) {

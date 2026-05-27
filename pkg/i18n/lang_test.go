@@ -122,6 +122,15 @@ func TestNegotiateLanguageSourceOrder(t *testing.T) {
 	}
 }
 
+func TestNegotiateLanguageUsesRuntimeDefaultWhenNoConfiguredDefault(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	got := NegotiateLanguage(req, LanguageNegotiationOptions{})
+	if got.Language != DefaultLanguage || got.Source != LanguageSourceDefault {
+		t.Fatalf("NegotiateLanguage = %#v, want %s from %s", got, DefaultLanguage, LanguageSourceDefault)
+	}
+}
+
 func TestMatchSupportedLanguage(t *testing.T) {
 	tests := []struct {
 		raw  string

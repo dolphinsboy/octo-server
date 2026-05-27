@@ -25,16 +25,17 @@ type Localizer interface {
 	Translate(code, lang string, params Params) string
 }
 
-// NewLocalizer 构造默认 Localizer。fallbackLang 通常对应 DM_DEFAULT_LANGUAGE
-// （主方案 D5），空串则使用 SourceLanguage。
+// NewLocalizer 构造默认 Localizer。fallbackLang 通常对应 OCTO_DEFAULT_LANGUAGE
+// （主方案 D5），空串则使用 DefaultLanguage。
 //
 // Localizer 实例线程安全且无状态——所有数据从 Bundle 单例读取，
 // 多 goroutine 可共享同一实例。
 func NewLocalizer(fallbackLang string) Localizer {
-	if fallbackLang == "" {
-		fallbackLang = SourceLanguage
+	resolved, err := ResolveDefaultLanguage(fallbackLang)
+	if err != nil {
+		resolved = DefaultLanguage
 	}
-	return &defaultLocalizer{fallbackLang: fallbackLang}
+	return &defaultLocalizer{fallbackLang: resolved}
 }
 
 type defaultLocalizer struct {

@@ -19,7 +19,7 @@ type ErrorRenderer struct {
 // NewErrorRenderer creates a wkhttp.ErrorRenderer implementation.
 func NewErrorRenderer(localizer Localizer) *ErrorRenderer {
 	if localizer == nil {
-		localizer = NewLocalizer(SourceLanguage)
+		localizer = NewLocalizer(DefaultLanguage)
 	}
 	return &ErrorRenderer{localizer: localizer}
 }
@@ -32,11 +32,11 @@ func (r *ErrorRenderer) Render(c *wkhttp.Context, spec wkhttp.ErrorSpec) {
 		return
 	}
 
-	lang := LanguageOrDefault(c.Request.Context(), SourceLanguage)
+	lang := LanguageOrDefault(c.Request.Context(), DefaultLanguage)
 	if matched, ok := MatchSupportedLanguage(lang); ok {
 		lang = matched
 	} else {
-		lang = SourceLanguage
+		lang = DefaultLanguage
 	}
 
 	transportStatus := normalizeHTTPStatus(spec.TransportStatus, http.StatusBadRequest)

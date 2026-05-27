@@ -1,0 +1,80 @@
+package i18n
+
+import "testing"
+
+func TestResolveDefaultLanguage(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{name: "empty uses runtime default", raw: "", want: DefaultLanguage},
+		{name: "normalizes zh alias", raw: "zh", want: "zh-CN"},
+		{name: "normalizes en alias", raw: "en", want: "en-US"},
+		{name: "rejects unsupported", raw: "fr-FR", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolveDefaultLanguage(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("ResolveDefaultLanguage returned nil error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveDefaultLanguage returned error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("ResolveDefaultLanguage = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultLanguageFromEnv(t *testing.T) {
+	t.Setenv(EnvDefaultLanguage, "")
+	got, err := DefaultLanguageFromEnv()
+	if err != nil {
+		t.Fatalf("DefaultLanguageFromEnv returned error: %v", err)
+	}
+	if got != DefaultLanguage {
+		t.Fatalf("DefaultLanguageFromEnv = %q, want %q", got, DefaultLanguage)
+	}
+
+	t.Setenv(EnvDefaultLanguage, "en-US")
+	got, err = DefaultLanguageFromEnv()
+	if err != nil {
+		t.Fatalf("DefaultLanguageFromEnv returned error: %v", err)
+	}
+	if got != "en-US" {
+		t.Fatalf("DefaultLanguageFromEnv = %q, want en-US", got)
+	}
+}
+
+func TestValidateRuntimeLocales(t *testing.T) {
+	resetBundle()
+	t.Cleanup(resetBundle)
+
+	for _, lang := range []string{DefaultLanguage, SourceLanguage} {
+		t.Run(lang, func(t *testing.T) {
+			if err := ValidateRuntimeLocales(lang); err != nil {
+				t.Fatalf("ValidateRuntimeLocales(%q) returned error: %v", lang, err)
+			}
+		})
+	}
+}
+
+func TestActiveLocaleExists(t *testing.T) {
+	if !activeLocaleExists(SourceLanguage) {
+		t.Fatalf("source locale %q should exist", SourceLanguage)
+	}
+	if !activeLocaleExists(DefaultLanguage) {
+		t.Fatalf("default locale %q should exist", DefaultLanguage)
+	}
+	if activeLocaleExists("fr-FR") {
+		t.Fatal("fr-FR active locale should not exist")
+	}
+}

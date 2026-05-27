@@ -95,7 +95,14 @@ func runAPI(ctx *config.Context) {
 	s := server.New(ctx)
 	route := s.GetRoute()
 	ctx.SetHttpRoute(route)
-	route.SetErrorRenderer(octoi18n.NewErrorRenderer(octoi18n.NewLocalizer(os.Getenv("DM_DEFAULT_LANGUAGE"))))
+	defaultLanguage, err := octoi18n.DefaultLanguageFromEnv()
+	if err != nil {
+		panic(err)
+	}
+	if err := octoi18n.ValidateRuntimeLocales(defaultLanguage); err != nil {
+		panic(fmt.Errorf("validate i18n runtime locales: %w", err))
+	}
+	route.SetErrorRenderer(octoi18n.NewErrorRenderer(octoi18n.NewLocalizer(defaultLanguage)))
 	// 替换web下的配置文件
 	replaceWebConfig(ctx.GetConfig())
 	// 初始化api
@@ -104,7 +111,7 @@ func runAPI(ctx *config.Context) {
 		panic(fmt.Errorf("parse DM_TRUSTED_LANG_HEADER_CIDRS: %w", err))
 	}
 	route.UseGin(octoi18n.EarlyMiddleware(octoi18n.MiddlewareOptions{
-		DefaultLanguage:        os.Getenv("DM_DEFAULT_LANGUAGE"),
+		DefaultLanguage:        defaultLanguage,
 		TrustedLangHeaderCIDRs: trustedLangCIDRs,
 	}))
 	route.UseGin(ctx.Tracer().GinMiddle()) // 需要放在 api.Route(s.GetRoute())的前面

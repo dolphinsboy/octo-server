@@ -9,8 +9,8 @@ import (
 
 func TestNewLocalizer_DefaultsFallbackLang(t *testing.T) {
 	l := NewLocalizer("").(*defaultLocalizer)
-	if l.fallbackLang != SourceLanguage {
-		t.Errorf("empty fallback should default to %q, got %q", SourceLanguage, l.fallbackLang)
+	if l.fallbackLang != DefaultLanguage {
+		t.Errorf("empty fallback should default to %q, got %q", DefaultLanguage, l.fallbackLang)
 	}
 }
 
@@ -152,4 +152,3 @@ func TestBuildLangTags(t *testing.T) {
 		})
 	}
 }
-

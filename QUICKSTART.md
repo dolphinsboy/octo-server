@@ -86,6 +86,12 @@ to your own path and point each section at your live infra:
 - `minio.*` (or whichever object-storage adapter you use) — your S3
   endpoint, app credentials, and bucket layout
 
+Runtime language fallback is controlled by environment variables rather
+than YAML. Set `OCTO_DEFAULT_LANGUAGE=zh-CN` in deployments so clients
+that do not send `Accept-Language`, `lang`, or `i18n_lang` keep receiving
+Chinese error messages during the i18n rollout. Supported values are
+`zh-CN` and `en-US`; invalid values fail startup.
+
 ### Run
 
 `octo-server` parses the `--config` flag with the stdlib `flag`
