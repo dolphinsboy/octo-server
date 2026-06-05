@@ -129,6 +129,48 @@ other = "The upstream service is unavailable."
 ["err.server.bot_api.user_not_found"]
 other = "User not found."
 
+["err.server.botfather.already_friends"]
+other = "You are already friends."
+
+["err.server.botfather.apply_exists"]
+other = "You have already submitted an application; please wait for the owner to review it."
+
+["err.server.botfather.apply_not_found"]
+other = "The application record does not exist."
+
+["err.server.botfather.apply_processed"]
+other = "The application has already been processed."
+
+["err.server.botfather.auth_failed"]
+other = "Bot authentication failed."
+
+["err.server.botfather.bot_not_found"]
+other = "The bot does not exist or you do not have permission."
+
+["err.server.botfather.bot_not_in_space"]
+other = "The bot does not belong to the current space."
+
+["err.server.botfather.cannot_apply_own_bot"]
+other = "No need to apply for a bot you own."
+
+["err.server.botfather.not_owner"]
+other = "You are not the owner of this bot."
+
+["err.server.botfather.query_failed"]
+other = "Failed to query data."
+
+["err.server.botfather.request_invalid"]
+other = "Invalid request."
+
+["err.server.botfather.robot_not_found"]
+other = "The bot does not exist or has been deleted."
+
+["err.server.botfather.store_failed"]
+other = "Failed to update data."
+
+["err.server.botfather.username_taken"]
+other = "The username is already taken."
+
 ["err.server.category.default_immutable"]
 other = "The default category cannot be modified."
 

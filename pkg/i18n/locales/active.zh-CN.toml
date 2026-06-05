@@ -1002,3 +1002,45 @@ other = "机器人认证校验失败。"
 
 ["err.server.bot_api.obo_internal"]
 other = "OBO 操作失败。"
+
+["err.server.botfather.request_invalid"]
+other = "数据格式有误。"
+
+["err.server.botfather.cannot_apply_own_bot"]
+other = "无需申请使用自己的 AI。"
+
+["err.server.botfather.not_owner"]
+other = "你不是该 AI 的 Owner。"
+
+["err.server.botfather.bot_not_in_space"]
+other = "该 Bot 不属于当前 Space。"
+
+["err.server.botfather.robot_not_found"]
+other = "机器人不存在或已被删除。"
+
+["err.server.botfather.apply_not_found"]
+other = "申请记录不存在。"
+
+["err.server.botfather.bot_not_found"]
+other = "Bot 不存在或无权限。"
+
+["err.server.botfather.apply_processed"]
+other = "该申请已被处理。"
+
+["err.server.botfather.apply_exists"]
+other = "你已提交过申请，请等待 Owner 审批。"
+
+["err.server.botfather.already_friends"]
+other = "你们已经是好友了。"
+
+["err.server.botfather.username_taken"]
+other = "用户名已被占用。"
+
+["err.server.botfather.auth_failed"]
+other = "机器人认证失败。"
+
+["err.server.botfather.query_failed"]
+other = "查询数据失败。"
+
+["err.server.botfather.store_failed"]
+other = "更新数据失败。"
