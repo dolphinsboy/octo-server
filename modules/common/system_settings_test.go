@@ -123,6 +123,145 @@ func TestSystemSettings_BoolFallsBackToYamlWhenUnset(t *testing.T) {
 	assert.False(t, s.RegisterOff(), "DB empty -> fall back to yaml false")
 }
 
+// ----- incomingwebhook settings (总开关 + 核心阈值) -----
+
+func TestSystemSettings_IncomingWebhookEnabled_DefaultsTrue(t *testing.T) {
+	t.Setenv(envIncomingWebhookEnabled, "") // 证明开关纯由 DB / 默认驱动
+	s := newTestSystemSettings(t, nil)
+	assert.True(t, s.IncomingWebhookEnabled(), "DB+env 缺失时默认开启")
+}
+
+func TestSystemSettings_IncomingWebhookEnabled_DBOverridesToFalse(t *testing.T) {
+	t.Setenv(envIncomingWebhookEnabled, "")
+	s := newTestSystemSettings(t, nil)
+	require.NoError(t, s.db.upsert("incomingwebhook", "enabled", "0", settingTypeBool, ""))
+	require.NoError(t, s.Reload())
+	assert.False(t, s.IncomingWebhookEnabled(), "DB 0 必须压制默认 true")
+}
+
+func TestSystemSettings_IncomingWebhookEnabled_EnvFallbackWhenDBUnset(t *testing.T) {
+	t.Setenv(envIncomingWebhookEnabled, "false")
+	s := newTestSystemSettings(t, nil)
+	assert.False(t, s.IncomingWebhookEnabled(), "DB 未配置 → env=false 生效")
+}
+
+func TestSystemSettings_IncomingWebhookThresholds_DefaultsAndDBOverride(t *testing.T) {
+	t.Setenv(envIncomingWebhookPerWebhookRPS, "")
+	t.Setenv(envIncomingWebhookPerWebhookBurst, "")
+	t.Setenv(envIncomingWebhookMaxPerGroup, "")
+	s := newTestSystemSettings(t, nil)
+
+	// DB+env 缺失 → code default。
+	assert.Equal(t, defaultIncomingWebhookPerWebhookRPS, s.IncomingWebhookPerWebhookRPS())
+	assert.Equal(t, defaultIncomingWebhookPerWebhookBurst, s.IncomingWebhookPerWebhookBurst())
+	assert.Equal(t, defaultIncomingWebhookMaxPerGroup, s.IncomingWebhookMaxPerGroup())
+
+	// DB 覆盖（含 float rps）。
+	require.NoError(t, s.db.upsert("incomingwebhook", "per_webhook_rps", "8.5", settingTypeFloat, ""))
+	require.NoError(t, s.db.upsert("incomingwebhook", "per_webhook_burst", "25", settingTypeInt, ""))
+	require.NoError(t, s.db.upsert("incomingwebhook", "max_per_group", "3", settingTypeInt, ""))
+	require.NoError(t, s.Reload())
+	assert.Equal(t, 8.5, s.IncomingWebhookPerWebhookRPS())
+	assert.Equal(t, 25, s.IncomingWebhookPerWebhookBurst())
+	assert.Equal(t, 3, s.IncomingWebhookMaxPerGroup())
+}
+
+func TestSystemSettings_IncomingWebhookRPS_EnvFallbackWhenDBUnset(t *testing.T) {
+	t.Setenv(envIncomingWebhookPerWebhookRPS, "7")
+	s := newTestSystemSettings(t, nil)
+	assert.Equal(t, 7.0, s.IncomingWebhookPerWebhookRPS(), "DB 未配置 → env 生效")
+}
+
+// TestSystemSettings_IncomingWebhook_ReadSideClamp_NoInfra pins the read-side
+// defence (#292 review): a snapshot carrying NaN / ±Inf / ≤0 — which a direct DB
+// edit could introduce even though the admin write path now rejects them — must
+// clamp back to the env/code default so the rate limiter never sees a value that
+// would silently disable it. Drives the snapshot directly, no infra.
+func TestSystemSettings_IncomingWebhook_ReadSideClamp_NoInfra(t *testing.T) {
+	t.Setenv(envIncomingWebhookPerWebhookRPS, "")   // → default 5
+	t.Setenv(envIncomingWebhookPerWebhookBurst, "") // → default 10
+	t.Setenv(envIncomingWebhookMaxPerGroup, "")     // → default 10
+
+	for _, bad := range []string{"NaN", "+Inf", "-Inf", "0", "-1", "-3.5"} {
+		s := &SystemSettings{}
+		snap := map[string]string{
+			"incomingwebhook.per_webhook_rps":   bad,
+			"incomingwebhook.per_webhook_burst": bad,
+			"incomingwebhook.max_per_group":     bad,
+		}
+		s.snapshot.Store(&snap)
+		assert.Equalf(t, defaultIncomingWebhookPerWebhookRPS, s.IncomingWebhookPerWebhookRPS(), "rps=%q must clamp to default", bad)
+		assert.Equalf(t, defaultIncomingWebhookPerWebhookBurst, s.IncomingWebhookPerWebhookBurst(), "burst=%q must clamp to default", bad)
+		assert.Equalf(t, defaultIncomingWebhookMaxPerGroup, s.IncomingWebhookMaxPerGroup(), "max_per_group=%q must clamp to default", bad)
+	}
+
+	// env-derived fallback is sanitized too: DM_INCOMINGWEBHOOK_RPS=NaN (which
+	// ParseRPSFromEnv passes through) with no DB row must NOT reach the getter as
+	// NaN — it falls back to the code default (Jerry-Xin #292 review).
+	t.Setenv(envIncomingWebhookPerWebhookRPS, "NaN")
+	emptySnap := &SystemSettings{}
+	em := map[string]string{}
+	emptySnap.snapshot.Store(&em)
+	assert.Equal(t, defaultIncomingWebhookPerWebhookRPS, emptySnap.IncomingWebhookPerWebhookRPS(),
+		"env=NaN with no DB row must fall back to the code default, not NaN")
+	t.Setenv(envIncomingWebhookPerWebhookRPS, "")
+
+	// A valid positive value is served as-is (clamp only catches the bad cases).
+	s := &SystemSettings{}
+	snap := map[string]string{
+		"incomingwebhook.per_webhook_rps":   "8.5",
+		"incomingwebhook.per_webhook_burst": "25",
+		"incomingwebhook.max_per_group":     "3",
+	}
+	s.snapshot.Store(&snap)
+	assert.Equal(t, 8.5, s.IncomingWebhookPerWebhookRPS())
+	assert.Equal(t, 25, s.IncomingWebhookPerWebhookBurst())
+	assert.Equal(t, 3, s.IncomingWebhookMaxPerGroup())
+}
+
+// TestSystemSettings_IncomingWebhook_GetterChain_NoInfra exercises the full
+// snapshot(DB) → env → code-default fallback for the incomingwebhook getters
+// WITHOUT a test server: it drives the snapshot map directly. This lets the
+// core getter logic be verified even where MySQL is unavailable; the DB-backed
+// tests above additionally cover the real Load/Reload path in CI.
+func TestSystemSettings_IncomingWebhook_GetterChain_NoInfra(t *testing.T) {
+	// 1) 空快照 + 无 env → code default。
+	t.Setenv(envIncomingWebhookEnabled, "")
+	t.Setenv(envIncomingWebhookPerWebhookRPS, "")
+	t.Setenv(envIncomingWebhookPerWebhookBurst, "")
+	t.Setenv(envIncomingWebhookMaxPerGroup, "")
+	s := &SystemSettings{}
+	empty := map[string]string{}
+	s.snapshot.Store(&empty)
+	assert.True(t, s.IncomingWebhookEnabled())
+	assert.Equal(t, defaultIncomingWebhookPerWebhookRPS, s.IncomingWebhookPerWebhookRPS())
+	assert.Equal(t, defaultIncomingWebhookPerWebhookBurst, s.IncomingWebhookPerWebhookBurst())
+	assert.Equal(t, defaultIncomingWebhookMaxPerGroup, s.IncomingWebhookMaxPerGroup())
+
+	// 2) env override（snapshot 仍空）。
+	t.Setenv(envIncomingWebhookEnabled, "off")
+	t.Setenv(envIncomingWebhookPerWebhookRPS, "7")
+	t.Setenv(envIncomingWebhookPerWebhookBurst, "3")
+	t.Setenv(envIncomingWebhookMaxPerGroup, "2")
+	assert.False(t, s.IncomingWebhookEnabled())
+	assert.Equal(t, 7.0, s.IncomingWebhookPerWebhookRPS())
+	assert.Equal(t, 3, s.IncomingWebhookPerWebhookBurst())
+	assert.Equal(t, 2, s.IncomingWebhookMaxPerGroup())
+
+	// 3) snapshot(DB) 压制 env。
+	snap := map[string]string{
+		"incomingwebhook.enabled":           "1",
+		"incomingwebhook.per_webhook_rps":   "8.5",
+		"incomingwebhook.per_webhook_burst": "25",
+		"incomingwebhook.max_per_group":     "9",
+	}
+	s.snapshot.Store(&snap)
+	assert.True(t, s.IncomingWebhookEnabled())
+	assert.Equal(t, 8.5, s.IncomingWebhookPerWebhookRPS())
+	assert.Equal(t, 25, s.IncomingWebhookPerWebhookBurst())
+	assert.Equal(t, 9, s.IncomingWebhookMaxPerGroup())
+}
+
 func TestSystemSettings_BoolOverridesYamlWhenSet(t *testing.T) {
 	s := newTestSystemSettings(t, nil)
 	s.ctx.GetConfig().Register.EmailOn = true // yaml says on

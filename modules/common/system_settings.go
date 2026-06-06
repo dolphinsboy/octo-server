@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"encoding/base64"
+	"math"
 	"os"
 	"regexp"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Mininglamp-OSS/octo-lib/config"
 	"github.com/Mininglamp-OSS/octo-lib/pkg/log"
+	"github.com/Mininglamp-OSS/octo-lib/pkg/wkhttp"
 	"go.uber.org/zap"
 )
 
@@ -232,6 +234,18 @@ func (s *SystemSettings) getIntClamped(category, key string, fallback int) int {
 		return fallback
 	}
 	return v
+}
+
+func (s *SystemSettings) getFloat(category, key string, fallback float64) float64 {
+	v, ok := s.lookup(category, key)
+	if !ok {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func (s *SystemSettings) getEncrypted(category, key string, fallback string) string {
@@ -532,4 +546,103 @@ func (s *SystemSettings) SupportEmailSmtp() string {
 // this getter returns the yaml fallback.
 func (s *SystemSettings) SupportEmailPwd() string {
 	return s.getEncrypted("support", "email_pwd", s.ctx.GetConfig().Support.EmailPwd)
+}
+
+// ----- incomingwebhook settings (总开关 + 核心阈值) -----
+//
+// 这些 env 名 / 默认值是 modules/incomingwebhook 的「单一真源」：incomingwebhook 侧
+// 通过下面的 getter 读取（不再各自读 env），从而让 system_setting 的 effective_value
+// 能反映完整的 DB → env → code-default 回退链。修改 env 名或默认值时，需同步
+// systemSettingSchema 的 incomingwebhook 行；reciprocal sync 注释见
+// modules/incomingwebhook/api.go 的 New / allowPerWebhook / create。
+const (
+	envIncomingWebhookEnabled         = "DM_INCOMINGWEBHOOK_ENABLED"
+	envIncomingWebhookPerWebhookRPS   = "DM_INCOMINGWEBHOOK_RPS"
+	envIncomingWebhookPerWebhookBurst = "DM_INCOMINGWEBHOOK_BURST"
+	envIncomingWebhookMaxPerGroup     = "DM_INCOMINGWEBHOOK_MAX_PER_GROUP"
+
+	defaultIncomingWebhookEnabled         = true
+	defaultIncomingWebhookPerWebhookRPS   = 5.0
+	defaultIncomingWebhookPerWebhookBurst = 10
+	defaultIncomingWebhookMaxPerGroup     = 10
+)
+
+// IncomingWebhookEnabled 是群入站 Webhook 功能的总开关。关闭后 push 端点返回 404、
+// 管理写操作（create/update/delete/regenerate）被拒绝，仅保留 list 只读。
+// 回退链：DB → env(DM_INCOMINGWEBHOOK_ENABLED) → 默认开启(true)。
+func (s *SystemSettings) IncomingWebhookEnabled() bool {
+	return s.getBool("incomingwebhook", "enabled", incomingWebhookEnabledEnvDefault())
+}
+
+// IncomingWebhookPerWebhookRPS 单个 webhook 令牌桶速率(rps)。DB → env → 默认 5。
+//
+// 读侧防御（D-289 同型，覆盖直接改库的旁路）：rps 必须是正有限值；NaN/±Inf/≤0 一律
+// 回退到 env/默认。否则 allowPerWebhook 的 `rps<=0` 短路会把限流器静默关掉，NaN 还会
+// 让 Redis Lua 脚本报错而 fail-open——正是这个 getter 要兜住的。写侧也已拒绝
+// （settingTypeFloat + Positive，见 api_manager_system_setting.go），此处是纵深防御。
+func (s *SystemSettings) IncomingWebhookPerWebhookRPS() float64 {
+	// env fallback 同样消毒：wkhttp.ParseRPSFromEnv 用 strconv.ParseFloat，会接受
+	// NaN / +Inf（DM_INCOMINGWEBHOOK_RPS=NaN 原样透出），所以 def 本身可能非有限。
+	// 若 env 给出非有限/≤0 的 def，回退到永远合法的 code default，避免它穿过下面的
+	// clamp 继续把 NaN 喂给限流器（Jerry-Xin #292 review）。
+	def := wkhttp.ParseRPSFromEnv(envIncomingWebhookPerWebhookRPS, defaultIncomingWebhookPerWebhookRPS)
+	if math.IsNaN(def) || math.IsInf(def, 0) || def <= 0 {
+		def = defaultIncomingWebhookPerWebhookRPS
+	}
+	v := s.getFloat("incomingwebhook", "per_webhook_rps", def)
+	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+		return def
+	}
+	return v
+}
+
+// IncomingWebhookPerWebhookBurst 单个 webhook 令牌桶突发上限。DB → env → 默认 10。
+// 读侧防御：≤0 回退默认（同 RPS，避免 `burst<=0` 短路静默关掉限流器）。
+func (s *SystemSettings) IncomingWebhookPerWebhookBurst() int {
+	def := wkhttp.ParseBurstFromEnv(envIncomingWebhookPerWebhookBurst, defaultIncomingWebhookPerWebhookBurst)
+	v := s.getInt("incomingwebhook", "per_webhook_burst", def)
+	if v <= 0 {
+		return def
+	}
+	return v
+}
+
+// IncomingWebhookMaxPerGroup 单个群可创建的 webhook 数量上限。DB → env → 默认 10。
+// 读侧防御：≤0 回退默认（max_per_group=0 会让每次 create 都 ErrQuotaExceeded，是
+// 总开关之外一种更难诊断的「暗关」）。
+func (s *SystemSettings) IncomingWebhookMaxPerGroup() int {
+	def := incomingWebhookMaxPerGroupEnvDefault()
+	v := s.getInt("incomingwebhook", "max_per_group", def)
+	if v <= 0 {
+		return def
+	}
+	return v
+}
+
+// incomingWebhookEnabledEnvDefault 解析 DM_INCOMINGWEBHOOK_ENABLED（缺省/无法识别
+// 视为开启），作为 DB 未配置时的 fallback。比 getBool 的 DB 解析更宽松，接受
+// 1/0/true/false/yes/no/on/off（大小写不敏感、允许前后空格）。
+func incomingWebhookEnabledEnvDefault() bool {
+	v := strings.TrimSpace(os.Getenv(envIncomingWebhookEnabled))
+	if v == "" {
+		return defaultIncomingWebhookEnabled
+	}
+	switch strings.ToLower(v) {
+	case "0", "false", "no", "off":
+		return false
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return defaultIncomingWebhookEnabled
+}
+
+// incomingWebhookMaxPerGroupEnvDefault 解析 DM_INCOMINGWEBHOOK_MAX_PER_GROUP；仅
+// 接受正整数，否则回退默认值（语义与迁移前 modules/incomingwebhook.maxPerGroup 一致）。
+func incomingWebhookMaxPerGroupEnvDefault() int {
+	if v := os.Getenv(envIncomingWebhookMaxPerGroup); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultIncomingWebhookMaxPerGroup
 }

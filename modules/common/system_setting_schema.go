@@ -7,6 +7,7 @@ const (
 	settingTypeString    = "string"
 	settingTypeBool      = "bool"
 	settingTypeInt       = "int"
+	settingTypeFloat     = "float"
 	settingTypeEncrypted = "encrypted"
 )
 
@@ -54,6 +55,16 @@ type settingDef struct {
 	// API layer is responsible for masking before serialisation; never
 	// surface this value directly.
 	Effective func(*SystemSettings) string
+	// Positive, when set on a settingTypeInt / settingTypeFloat key, requires a
+	// strictly-positive finite value on the admin write path and OPTS OUT of the
+	// shared [settingIntMin, settingIntMax] bound (which exists for the
+	// day-window int settings where 0 is a valid "disable" sentinel). Used by
+	// rate-limit / quota knobs (incomingwebhook.*) where 0 / negative / NaN / Inf
+	// would silently disable the control — the schema comment on settingIntMin
+	// anticipated this per-key override. No artificial upper bound is imposed
+	// (matches the env semantics these keys fall back to). Read-side defence is
+	// in the typed getters (clamp ≤0 / non-finite → default).
+	Positive bool
 }
 
 // systemSettingSchema enumerates every admin-tunable setting backed by the
@@ -93,6 +104,18 @@ var systemSettingSchema = []settingDef{
 	{Category: "sidebar", Key: "recent_filter_person_days", Type: settingTypeInt, Description: "最近会话-单聊(DM)活跃过滤窗口(天)，0=不过滤(默认)",
 		Effective: func(s *SystemSettings) string { return strconv.Itoa(s.SidebarRecentFilterPersonDays()) }},
 
+	// Incoming webhook 总开关 + 核心阈值 — 与 env(DM_INCOMINGWEBHOOK_*) 等价，DB 为
+	// 单一真源。enabled 关闭后 push 返回 404、管理写操作被拒、仅保留 list 只读；
+	// 其余三项实时调阈值无需重启（SystemSettings 快照 60s 内多实例收敛）。
+	{Category: "incomingwebhook", Key: "enabled", Type: settingTypeBool, Description: "是否开启群入站 Webhook（关闭后停止推送与管理写操作）",
+		Effective: func(s *SystemSettings) string { return boolToCanonical(s.IncomingWebhookEnabled()) }},
+	{Category: "incomingwebhook", Key: "per_webhook_rps", Type: settingTypeFloat, Description: "单个 Webhook 每秒推送速率上限（令牌桶 rps）", Positive: true,
+		Effective: func(s *SystemSettings) string { return floatToCanonical(s.IncomingWebhookPerWebhookRPS()) }},
+	{Category: "incomingwebhook", Key: "per_webhook_burst", Type: settingTypeInt, Description: "单个 Webhook 推送突发上限（令牌桶 burst）", Positive: true,
+		Effective: func(s *SystemSettings) string { return strconv.Itoa(s.IncomingWebhookPerWebhookBurst()) }},
+	{Category: "incomingwebhook", Key: "max_per_group", Type: settingTypeInt, Description: "单个群最多可创建的 Webhook 数量", Positive: true,
+		Effective: func(s *SystemSettings) string { return strconv.Itoa(s.IncomingWebhookMaxPerGroup()) }},
+
 	// Email server config — formerly yaml-only (Support.* in config.go).
 	{Category: "support", Key: "email", Type: settingTypeString, Description: "技术支持邮箱（发件人）",
 		Effective: func(s *SystemSettings) string { return s.SupportEmail() }},
@@ -110,6 +133,12 @@ func boolToCanonical(v bool) string {
 		return "1"
 	}
 	return "0"
+}
+
+// floatToCanonical 把 float 规范成最短十进制表示（5.0 → "5"，0.5 → "0.5"），与
+// settingTypeFloat 的 DB 存储 / POST 入参拼写保持一致，供 GET effective_value 用。
+func floatToCanonical(v float64) string {
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 // schemaKey returns the canonical "category.key" string used as map key in
