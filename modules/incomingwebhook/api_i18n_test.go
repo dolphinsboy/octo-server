@@ -19,7 +19,8 @@ import (
 // #246 note in api_i18n.go) don't trip the guard. Add any new handler/limiter
 // file to the list below.
 func TestIncomingWebhookNoLegacyResponseError(t *testing.T) {
-	files := []string{"api.go", "api_i18n.go", "ratelimit.go", "localfloor.go", "cache.go"}
+	files := []string{"api.go", "api_i18n.go", "ratelimit.go", "localfloor.go", "cache.go",
+		"adapter.go", "adapter_github.go", "adapter_wecom.go"}
 	banned := []string{
 		".ResponseError(",
 		".ResponseErrorf(",
@@ -125,7 +126,7 @@ func TestIncomingWebhookRespondHelpers(t *testing.T) {
 // legacy {msg,status} shape, so an e2e body never carries error.details — see the
 // note in richtext_push_test.go. No DB/Redis needed; this only exercises the renderer.
 func TestPushPayloadInvalidSurfacesReason(t *testing.T) {
-	for _, reason := range []string{"blocks", "msg_type", "content", "json"} {
+	for _, reason := range []string{"blocks", "msg_type", "content", "json", "event"} {
 		t.Run(reason, func(t *testing.T) {
 			r := iwhHelperHarness(func(c *wkhttp.Context) { pushPayloadInvalid(c, reason) })
 			req := httptest.NewRequest(http.MethodGet, "/probe", nil)
