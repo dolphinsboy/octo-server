@@ -2,8 +2,10 @@ package messages_search
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"sync"
 	"time"
@@ -101,6 +103,22 @@ func buildESClient(cfg SearchConfig) (*elastic.Client, error) {
 		elastic.SetSniff(false),
 		elastic.SetHealthcheck(true),
 		elastic.SetHealthcheckTimeout(3 * time.Second),
+	}
+	if cfg.OSInsecureSkipVerify {
+		// Self-signed / internal-CA OS clusters in dev / test environments
+		// where the pod's system trust store has no chain to verify against.
+		// Disable cert verification on the HTTP client olivere uses for both
+		// the startup healthcheck and subsequent requests. MUST NOT be set
+		// in production deployments — see config.go::OSInsecureSkipVerify.
+		hc := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			},
+		}
+		if cfg.Timeout > 0 {
+			hc.Timeout = cfg.Timeout
+		}
+		opts = append(opts, elastic.SetHttpClient(hc))
 	}
 	if cfg.OSUsername != "" {
 		opts = append(opts, elastic.SetBasicAuth(cfg.OSUsername, cfg.OSPassword))

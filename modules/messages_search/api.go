@@ -61,6 +61,11 @@ func New(ctx *config.Context) *Handler {
 			"built-in default cursor signing key. Set a per-deployment " +
 			"secret in production.")
 	}
+	if cfg.OSInsecureSkipVerify {
+		h.Warn("OCTO_SEARCH_OS_INSECURE_SKIP_VERIFY=true; OpenSearch TLS " +
+			"certificate verification is DISABLED. Use only in dev/test " +
+			"environments with self-signed certificates.")
+	}
 	return h
 }
 
