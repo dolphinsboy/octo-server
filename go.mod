@@ -25,6 +25,7 @@ require (
 	github.com/gomarkdown/markdown v0.0.0-20230716120725-531d2d74bc12
 	github.com/google/uuid v1.3.0
 	github.com/gookit/goutil v0.6.12
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/judwhite/go-svc v1.2.1
 	github.com/longbridgeapp/opencc v0.3.13
 	github.com/mattn/go-sqlite3 v1.14.17

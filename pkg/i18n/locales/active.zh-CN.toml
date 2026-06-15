@@ -1099,3 +1099,20 @@ other = "运营看板 ETL 正在运行，请稍后再试。"
 
 ["err.server.opanalytics.etl_trigger_failed"]
 other = "触发运营看板 ETL 失败。"
+
+# ---- modules/messages_search：消息搜索（直查 OpenSearch） ----
+
+["err.server.messages_search.validation_failed"]
+other = "搜索请求参数无效。"
+
+["err.server.messages_search.upstream_unavailable"]
+other = "搜索服务暂时不可用，请稍后再试。"
+
+["err.server.messages_search.internal"]
+other = "搜索服务内部错误。"
+
+["err.server.messages_search.rate_limited"]
+other = "搜索请求过于频繁，请稍后再试。"
+
+["err.server.messages_search.not_found"]
+other = "未找到对应频道或资源。"

@@ -459,6 +459,21 @@ other = "Message search failed."
 ["err.server.message.store_failed"]
 other = "Failed to persist message data."
 
+["err.server.messages_search.internal"]
+other = "Internal search error."
+
+["err.server.messages_search.not_found"]
+other = "Channel or resource not found for search."
+
+["err.server.messages_search.rate_limited"]
+other = "Search rate limit exceeded."
+
+["err.server.messages_search.upstream_unavailable"]
+other = "Search service is temporarily unavailable."
+
+["err.server.messages_search.validation_failed"]
+other = "Invalid search request."
+
 ["err.server.oidc.bind_already_bound"]
 other = "This identity is already bound. Please sign in via OIDC to continue."
 
