@@ -54,28 +54,31 @@ func memberSearchWhere(keyword string) (string, []interface{}) {
 //     （响应仅显示 138****5678），admin 无法通过子串查询逐位探测/重建完整号码。
 //
 // 前端注意：phone 检索只匹配后 4 位，传完整号码不会命中——按手机号查找请用后 4 位。
-//
-// real_name 单独处理：仅在 user.name 为空时才加入 OR 条件（见 memberSearchActiveWhere），
-// 保证「可检索 == 可见」，消除 PII 探测 oracle。
-var memberSearchActiveColumns = []string{"u.name", "u.username", "u.email", "RIGHT(u.phone,4)", "sm.uid"}
+// memberSearchActiveColumns 空间侧 members/search 非 name 维度的检索列。
+// name 维度单独用 CASE 表达式（见 memberSearchActiveWhere），保证可检索 == 可见。
+var memberSearchActiveColumns = []string{"u.username", "u.email", "RIGHT(u.phone,4)", "sm.uid"}
 
 // memberSearchActiveWhere 为空间侧 members/search 组装跨列 OR LIKE 条件。
 // list / count 共用同一条件，避免搜索范围漂移导致分页错位。
 //
-// real_name 特殊处理：
-//   只在 u.name 为空（NULL 或 ''）时才 OR uv.real_name LIKE ?，
-//   确保「可检索 == 可见」——real_name 兜底展示的场景下才允许按 real_name 检索，
-//   避免对 user.name 非空用户产生 PII 探测 oracle。
+// name 维度用与展示 CASE 完全一致的表达式搜索，保证「可检索 == 可见」：
+//   - user.name 非空 → 只能按 user.name 匹配，real_name 不可探测
+//   - user.name 为空 → 按 real_name 匹配（与展示一致，无 PII oracle）
+//   - 两者均空      → 按 User-<uid[:6]> 占位符匹配
 func memberSearchActiveWhere(keyword string) (string, []interface{}) {
 	like := buildLikePattern(keyword)
+	// 非 name 列的普通 LIKE 条件
 	clauses := make([]string, len(memberSearchActiveColumns))
 	args := make([]interface{}, len(memberSearchActiveColumns))
 	for i, col := range memberSearchActiveColumns {
 		clauses[i] = col + " LIKE ?" + likeEscapeClause
 		args[i] = like
 	}
-	// 仅当 u.name 为空时才允许按 real_name 检索，保证可检索 == 可见，防 PII oracle。
-	clauses = append(clauses, "((u.name IS NULL OR u.name = '') AND uv.real_name LIKE ?"+likeEscapeClause+")")
+	// name 维度：CASE 表达式与 SELECT 展示逻辑字节完全一致，保证可检索 == 可见
+	nameCASE := "(CASE WHEN u.name IS NOT NULL AND u.name <> '' THEN u.name" +
+		" WHEN uv.real_name IS NOT NULL AND uv.real_name <> '' THEN uv.real_name" +
+		" ELSE CONCAT('User-', LEFT(sm.uid, 6)) END)"
+	clauses = append(clauses, nameCASE+" LIKE ?"+likeEscapeClause)
 	args = append(args, like)
 	return strings.Join(clauses, " OR "), args
 }
