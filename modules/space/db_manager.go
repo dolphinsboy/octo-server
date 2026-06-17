@@ -47,17 +47,25 @@ func memberSearchWhere(keyword string) (string, []interface{}) {
 	return strings.Join(clauses, " OR "), args
 }
 
-// memberSearchActiveColumns 空间侧 members/search 端点的检索列。与管理端
-// memberSearchColumns 的区别：
+// memberSearchActiveColumns 空间侧 members/search 端点的基础检索列（不含 real_name）。
+// 与管理端 memberSearchColumns 的区别：
 //   - email 明文匹配、明文返回（工作邮箱，无需掩码）；
 //   - phone 仅匹配后 4 位（RIGHT(u.phone,4)），使「可检索粒度 == 可见粒度」
 //     （响应仅显示 138****5678），admin 无法通过子串查询逐位探测/重建完整号码。
 //
 // 前端注意：phone 检索只匹配后 4 位，传完整号码不会命中——按手机号查找请用后 4 位。
+//
+// real_name 单独处理：仅在 user.name 为空时才加入 OR 条件（见 memberSearchActiveWhere），
+// 保证「可检索 == 可见」，消除 PII 探测 oracle。
 var memberSearchActiveColumns = []string{"u.name", "u.username", "u.email", "RIGHT(u.phone,4)", "sm.uid"}
 
 // memberSearchActiveWhere 为空间侧 members/search 组装跨列 OR LIKE 条件。
 // list / count 共用同一条件，避免搜索范围漂移导致分页错位。
+//
+// real_name 特殊处理：
+//   只在 u.name 为空（NULL 或 ''）时才 OR uv.real_name LIKE ?，
+//   确保「可检索 == 可见」——real_name 兜底展示的场景下才允许按 real_name 检索，
+//   避免对 user.name 非空用户产生 PII 探测 oracle。
 func memberSearchActiveWhere(keyword string) (string, []interface{}) {
 	like := buildLikePattern(keyword)
 	clauses := make([]string, len(memberSearchActiveColumns))
@@ -66,6 +74,9 @@ func memberSearchActiveWhere(keyword string) (string, []interface{}) {
 		clauses[i] = col + " LIKE ?" + likeEscapeClause
 		args[i] = like
 	}
+	// 仅当 u.name 为空时才允许按 real_name 检索，保证可检索 == 可见，防 PII oracle。
+	clauses = append(clauses, "((u.name IS NULL OR u.name = '') AND uv.real_name LIKE ?"+likeEscapeClause+")")
+	args = append(args, like)
 	return strings.Join(clauses, " OR "), args
 }
 
