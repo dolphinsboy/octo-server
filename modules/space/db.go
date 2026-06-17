@@ -203,6 +203,7 @@ func (d *DB) countSearchMembers(spaceId, keyword string) (int64, error) {
 	builder := d.session.Select("COUNT(*)").
 		From(dbr.I("space_member").As("sm")).
 		LeftJoin(dbr.I("user").As("u"), "u.uid=sm.uid").
+		LeftJoin(dbr.I("user_verification").As("uv"), "uv.user_id=sm.uid").
 		Where("sm.space_id=? AND sm.status=1", spaceId)
 	if keyword != "" {
 		clause, args := memberSearchActiveWhere(keyword)

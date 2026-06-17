@@ -11,7 +11,7 @@ import (
 func seedUserVerification(t *testing.T, uid, realName string) {
 	t.Helper()
 	_, err := testCtx.DB().InsertBySql(
-		"INSERT INTO user_verification (user_id, real_name, source, source_sub) VALUES (?, ?, 'aegis', ?) "+
+		"INSERT INTO user_verification (user_id, real_name, source, source_sub, verified_at) VALUES (?, ?, 'aegis', ?, NOW()) "+
 			"ON DUPLICATE KEY UPDATE real_name=VALUES(real_name)",
 		uid, realName, "sub-"+uid,
 	).Exec()
