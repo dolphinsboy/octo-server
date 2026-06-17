@@ -60,6 +60,10 @@ func TestMain(m *testing.M) {
 		// username/phone 对齐生产 user 表（modules/user/sql/20191106000003），管理端成员搜索按这两列做 LIKE 匹配。
 		"DROP TABLE IF EXISTS `user`",
 		"CREATE TABLE `user` (id BIGINT AUTO_INCREMENT PRIMARY KEY, uid VARCHAR(40) NOT NULL DEFAULT '', name VARCHAR(100) DEFAULT '', username VARCHAR(40) DEFAULT '', email VARCHAR(200) DEFAULT '', phone VARCHAR(20) DEFAULT '', avatar VARCHAR(200) DEFAULT '', robot SMALLINT DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY idx_uid(uid)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+		// user_verification 表：member 列表/搜索的 display-name 兜底链 LEFT JOIN 它取 real_name
+		// （issue #344）。生产 DDL 见 modules/user/sql/20260505000003_user_legacy01.sql；
+		// 这里只建测试所需的 user_id/real_name 两列，IF NOT EXISTS 复用同库即可。
+		"CREATE TABLE IF NOT EXISTS user_verification (user_id VARCHAR(40) NOT NULL, real_name VARCHAR(128) NOT NULL DEFAULT '', source VARCHAR(40) DEFAULT '', source_sub VARCHAR(128) DEFAULT '', verified_at TIMESTAMP NULL, PRIMARY KEY (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
 	}
 	for _, ddl := range depDDLs {
 		if _, err := db.Exec(ddl); err != nil {

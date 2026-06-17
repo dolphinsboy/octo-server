@@ -146,10 +146,16 @@ func (d *DB) queryMemberIncludeRemoved(spaceId string, uid string) (*MemberModel
 func (d *DB) queryMembers(spaceId string, loginUID string, page uint64, limit uint64) ([]*MemberDetailModel, error) {
 	var models []*MemberDetailModel
 	_, err := d.session.SelectBySql(`
-		SELECT sm.*, IFNULL(u.name,'') as name,
+		SELECT sm.*,
+			CASE
+				WHEN u.name IS NOT NULL AND u.name <> '' THEN u.name
+				WHEN uv.real_name IS NOT NULL AND uv.real_name <> '' THEN uv.real_name
+				ELSE CONCAT('User-', LEFT(sm.uid, 6))
+			END AS name,
 			CASE WHEN r.robot_id IS NOT NULL AND r.status=1 THEN 1 ELSE 0 END as robot
 		FROM space_member sm
 		LEFT JOIN user u ON u.uid=sm.uid
+		LEFT JOIN user_verification uv ON uv.user_id=sm.uid
 		LEFT JOIN robot r ON r.robot_id=sm.uid
 		WHERE sm.space_id=? AND sm.status=1 AND (
 			r.robot_id IS NULL
@@ -164,13 +170,18 @@ func (d *DB) queryMembers(spaceId string, loginUID string, page uint64, limit ui
 func (d *DB) searchMembers(spaceId, keyword string, pageIndex, pageSize int) ([]*memberSearchModel, error) {
 	builder := d.session.Select(
 		"sm.*",
-		"IFNULL(u.name,'') as name",
+		`CASE
+			WHEN u.name IS NOT NULL AND u.name <> '' THEN u.name
+			WHEN uv.real_name IS NOT NULL AND uv.real_name <> '' THEN uv.real_name
+			ELSE CONCAT('User-', LEFT(sm.uid, 6))
+		END AS name`,
 		"IFNULL(u.username,'') as username",
 		"IFNULL(u.email,'') as email",
 		"IFNULL(u.phone,'') as phone",
 		"CASE WHEN r.robot_id IS NOT NULL AND r.status=1 THEN 1 ELSE 0 END as robot",
 	).From(dbr.I("space_member").As("sm")).
 		LeftJoin(dbr.I("user").As("u"), "u.uid=sm.uid").
+		LeftJoin(dbr.I("user_verification").As("uv"), "uv.user_id=sm.uid").
 		LeftJoin(dbr.I("robot").As("r"), "r.robot_id=sm.uid").
 		Where("sm.space_id=? AND sm.status=1", spaceId)
 	if keyword != "" {
