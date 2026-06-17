@@ -114,3 +114,51 @@ func TestSearchMembersDisplayNameFallback(t *testing.T) {
 	assert.Equal(t, "Bob Real", byUID[verifiedUID])
 	assert.Equal(t, "User-"+placeholderUID[:6], byUID[placeholderUID])
 }
+
+// TestSearchMembersKeywordByRealName 验证 real_name 仅在 user.name 为空时参与 keyword 检索（防 PII oracle）。
+func TestSearchMembersKeywordByRealName(t *testing.T) {
+	_, _, err := setup(t)
+	require.NoError(t, err)
+
+	spaceId := "sp-keyword-realname"
+	owner := "owner-keyword-realname"
+	seedMemberSearchSpace(t, spaceId, owner)
+
+	// 用户 A：user.name 非空，有 real_name → keyword=real_name 不应命中（PII oracle 防护）
+	namedUID := "uid-kw-named-001"
+	seedMemberSearchUser(t, namedUID, "DisplayName", "kw-alice", "", "")
+	seedUserVerification(t, namedUID, "Alice Real")
+	seedMemberSearchMember(t, spaceId, namedUID, 0, 1)
+
+	// 用户 B：user.name 为空，有 real_name → keyword=real_name 应命中（可检索==可见）
+	verifiedUID := "uid-kw-verified-002"
+	seedMemberSearchUser(t, verifiedUID, "", "kw-bob", "", "")
+	seedUserVerification(t, verifiedUID, "Bob Real")
+	seedMemberSearchMember(t, spaceId, verifiedUID, 0, 1)
+
+	// 场景 1：按 "Alice Real"（用户 A 的 real_name）搜索 → 不命中（user.name 非空，防 oracle）
+	list, err := testSpaceDB.searchMembers(spaceId, "Alice Real", 1, 50)
+	require.NoError(t, err)
+	uids := make([]string, 0, len(list))
+	for _, m := range list {
+		uids = append(uids, m.UID)
+	}
+	assert.NotContains(t, uids, namedUID, "user.name 非空时 real_name 不应参与 keyword 搜索")
+
+	count, err := testSpaceDB.countSearchMembers(spaceId, "Alice Real")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count, "count 应与 list 一致")
+
+	// 场景 2：按 "Bob Real"（用户 B 的 real_name）搜索 → 命中（user.name 为空，可检索==可见）
+	list2, err := testSpaceDB.searchMembers(spaceId, "Bob Real", 1, 50)
+	require.NoError(t, err)
+	uids2 := make([]string, 0, len(list2))
+	for _, m := range list2 {
+		uids2 = append(uids2, m.UID)
+	}
+	assert.Contains(t, uids2, verifiedUID, "user.name 为空时 real_name 应参与 keyword 搜索")
+
+	count2, err := testSpaceDB.countSearchMembers(spaceId, "Bob Real")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count2, "count 应与 list 一致")
+}
