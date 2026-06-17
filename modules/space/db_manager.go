@@ -32,7 +32,7 @@ func buildLikePattern(keyword string) string {
 // email/username 对 SSO / 邮箱登录用户尤为关键：这类用户 username 可能为空，
 // 只能靠 email 定位（与 user 模块 queryUserListWithPageAndKeyword 的取向一致）。
 // u.* 来自 LEFT JOIN 的 user 表，sm.uid 来自 space_member 自身。
-var memberSearchColumns = []string{"u.name", "u.username", "u.email", "u.phone", "sm.uid", "uv.real_name"}
+var memberSearchColumns = []string{"u.name", "u.username", "u.email", "u.phone", "sm.uid"}
 
 // memberSearchWhere 按 keyword 组装跨列 OR LIKE 条件及其占位参数。
 // list / count 两处共用，避免搜索范围漂移导致"列表与总数样本不一致"的分页错位。
