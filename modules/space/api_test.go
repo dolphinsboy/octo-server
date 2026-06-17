@@ -61,9 +61,24 @@ func TestMain(m *testing.M) {
 		"DROP TABLE IF EXISTS `user`",
 		"CREATE TABLE `user` (id BIGINT AUTO_INCREMENT PRIMARY KEY, uid VARCHAR(40) NOT NULL DEFAULT '', name VARCHAR(100) DEFAULT '', username VARCHAR(40) DEFAULT '', email VARCHAR(200) DEFAULT '', phone VARCHAR(20) DEFAULT '', avatar VARCHAR(200) DEFAULT '', robot SMALLINT DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, UNIQUE KEY idx_uid(uid)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
 		// user_verification 表：member 列表/搜索的 display-name 兜底链 LEFT JOIN 它取 real_name
-		// （issue #344）。生产 DDL 见 modules/user/sql/20260505000003_user_legacy01.sql；
-		// 这里只建测试所需的 user_id/real_name 两列，IF NOT EXISTS 复用同库即可。
-		"CREATE TABLE IF NOT EXISTS user_verification (user_id VARCHAR(40) NOT NULL, real_name VARCHAR(128) NOT NULL DEFAULT '', source VARCHAR(40) DEFAULT '', source_sub VARCHAR(128) DEFAULT '', verified_at TIMESTAMP NULL, PRIMARY KEY (user_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+		// 使用与生产迁移一致的完整 DDL（20260505000003_user_legacy01.sql），
+		// 先 DROP 再 CREATE 避免截断版 IF NOT EXISTS 在共享 test DB 上被跳过，
+		// 导致后续测试包缺列。
+		"DROP TABLE IF EXISTS user_verification",
+		`CREATE TABLE user_verification (
+			user_id     VARCHAR(40)  NOT NULL COMMENT 'OCTO 用户 UID',
+			real_name   VARCHAR(128) NOT NULL COMMENT '实名',
+			source      VARCHAR(32)  NOT NULL COMMENT '实名来源: cas/wecom/feishu',
+			source_sub  VARCHAR(128) NOT NULL COMMENT '来源侧 sub',
+			emp_id      VARCHAR(64)  DEFAULT NULL COMMENT '工号',
+			dept        VARCHAR(255) DEFAULT NULL COMMENT '部门',
+			email       VARCHAR(255) DEFAULT NULL COMMENT '邮箱',
+			mobile      VARCHAR(32)  DEFAULT NULL COMMENT '手机号',
+			verified_at DATETIME     NOT NULL COMMENT '实名完成时间（UTC）',
+			updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (user_id),
+			KEY idx_user_verification_source (source, source_sub)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`,
 	}
 	for _, ddl := range depDDLs {
 		if _, err := db.Exec(ddl); err != nil {
